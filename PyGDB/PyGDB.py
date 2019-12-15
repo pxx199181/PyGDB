@@ -143,11 +143,14 @@ class PyGDB():
 			return None
 
 	def run_gdb(self):
-		self.io = process(argv = self.gdb_argv)
-		pids = proc.pidof(self.io)
+		if io_wrapper == "zio":
+			self.io = zio(self.gdb_argv, print_read = False, print_write = False)
+			pids = [self.io.pid, 0]
+		else:
+			self.io = process(argv = self.gdb_argv)
+			pids = proc.pidof(self.io)
 
-		#self.io = zio(self.gdb_argv, print_read = False, print_write = False)
-		#pids = [self.io.pid, 0]
+		
 		print("gdb pid", pids)
 		self.gdb_pid = pids[0]
 
