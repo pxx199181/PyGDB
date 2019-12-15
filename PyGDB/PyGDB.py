@@ -4,7 +4,7 @@ from pwnlib.util import misc
 #from zio import which
 import os
 import json
-from numpy import unicode
+#from numpy import unicode
 import re
 import threading
 
