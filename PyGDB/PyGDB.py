@@ -1,9 +1,22 @@
 from pwn import *
 from pwnlib.util import misc
+#from zio import *
+#from zio import which
 import os
 import json
 from numpy import unicode
 import re
+import threading
+
+"""
+u8 = p8 = l8
+u16 = p16 = l16
+u32 = p32 = l32
+u64 = p64 = l64
+"""
+
+which = misc.which
+
 
 import sys
 reload(sys)
@@ -60,7 +73,8 @@ class PyGDB():
 		self.libc_base = None
 		self.heap_base = None
 
-		self.gdb_path = misc.which('gdb-multiarch') or misc.which('gdb')
+		#self.gdb_path = misc.which('gdb-multiarch') or misc.which('gdb')
+		self.gdb_path = which('gdb-multiarch') or which('gdb')
 		if not self.gdb_path:
 			print("'GDB is not installed\n$ apt-get install gdb'")
 			exit(0)
@@ -129,6 +143,9 @@ class PyGDB():
 	def run_gdb(self):
 		self.io = process(argv = self.gdb_argv)
 		pids = proc.pidof(self.io)
+
+		#self.io = zio(self.gdb_argv, print_read = False, print_write = False)
+		#pids = [self.io.pid, 0]
 		print("gdb pid", pids)
 		self.gdb_pid = pids[0]
 
@@ -156,8 +173,13 @@ class PyGDB():
 			 
 	def do_pygdb_ret(self, cmdline):
 		self.io.sendline("pyCmdRet %s"%cmdline)
-		self.io.recvuntil("pyCmd-B{")
-		data = self.io.recvuntil("}pyCmd-E", drop = True)
+
+		begin_s = "pyCmd-B{"
+		end_s = "}pyCmd-E"
+		self.io.recvuntil(begin_s)
+		#data = self.io.recvuntil("}pyCmd-E", drop = True)
+		data = self.io.recvuntil(end_s)
+		data = data[:-len(end_s)]
 		data = data.decode("hex")
 		if data == '':
 			return ''
@@ -280,31 +302,36 @@ class PyGDB():
 
 	def interact(self):
 		self.do_pygdb("set_interact_mode 1")
-		log.info('Switching to interactive mode')
+		print('[+]' + 'Switching to interactive mode')
+		self.io.sendline("context")
+
+		#self.io.interact()
+		#return ;
 
 		go = threading.Event()
 		def recv_thread():
 			while not go.isSet():
 				try:
 					cur = self.io.recv(timeout = 0.05)
+					#cur = self.io.read_until_timeout(timeout = 0.05)
 					cur = cur.replace('\r\n', '\n')
 					if cur:
 						sys.stdout.write(cur)
 						sys.stdout.flush()
 				except EOFError:
-					log.info('Got EOF while reading in interactive')
+					print('[+]' + 'Got EOF while reading in interactive')
 					break
 				except KeyboardInterrupt:
 					pass
+			print "over"
 
-		t = context.Thread(target = recv_thread)
+		#t = context.Thread(target = recv_thread)
+		t = threading.Thread(target = recv_thread)
 		t.daemon = True
 		t.start()
 
 		import time
 		time.sleep(0.5)
-
-		self.io.sendline("context")
 
 
 		is_running = True
@@ -323,7 +350,7 @@ class PyGDB():
 						self.io.send(data)
 					except EOFError:
 						go.set()
-						log.info('Got EOF while sending in interactive')
+						print('[+]' + 'Got EOF while sending in interactive')
 					
 					if data.strip() in ["q", "quit"]:
 						self.quit()
@@ -331,7 +358,7 @@ class PyGDB():
 						go.set()
 						break
 			except KeyboardInterrupt:
-				log.info('Interrupted')
+				print('[+]' + 'Interrupted')
 				self.interrupt_process()
 		while t.is_alive():
 			t.join(timeout = 0.1)
@@ -518,6 +545,6 @@ class PyGDB():
 				else:
 					break
 			except KeyboardInterrupt:
-				log.info('Interrupted')
+				print('[+]' + 'Interrupted')
 				self.interrupt_process()
 				break
