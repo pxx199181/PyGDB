@@ -12,7 +12,7 @@
 - Documention
 - Update log
 # Introduction
-A gdb wrapper(based on `peda-arm`) aiming at using python to debug.
+A gdb wrapper(based on `peda-arm`, modify some functions) aiming at using python to debug.
 
 
 ## Features
@@ -203,21 +203,27 @@ if __name__ == "__main__":
 
 ### test x86/x64
 test a x86/x64 case.
+
 run 'python test_pygdb.py intel'
 
 ### test arm
 test a arm case.
+
 run './run_arm.sh' first
+
 then run 'python test_pygdb.py arm'
 
 ### test hook
 test hook demo.
+
 run 'python test_pygdb.py hook'
 
 ## More
 read the code!
+
 # Documention
 TODO
+
 # Update Log 
 ## 2019/12/15 Version 1.0.0
 - release it
