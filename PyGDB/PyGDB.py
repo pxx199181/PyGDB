@@ -1,22 +1,24 @@
-from pwn import *
-from pwnlib.util import misc
-#from zio import *
-#from zio import which
+
+try:
+	from pwn import *
+	from pwnlib.util import misc
+	which = misc.which
+
+	io_wrapper = "pwntools"
+except:
+	from zio import *
+	from zio import which
+	u8 = p8 = l8
+	u16 = p16 = l16
+	u32 = p32 = l32
+	u64 = p64 = l64
+
+	io_wrapper = "zio"
+
 import os
 import json
-#from numpy import unicode
 import re
 import threading
-
-"""
-u8 = p8 = l8
-u16 = p16 = l16
-u32 = p32 = l32
-u64 = p64 = l64
-"""
-
-which = misc.which
-
 
 import sys
 reload(sys)
@@ -305,8 +307,9 @@ class PyGDB():
 		print('[+]' + 'Switching to interactive mode')
 		self.io.sendline("context")
 
-		#self.io.interact()
-		#return ;
+		if io_wrapper == "zio":
+			self.io.interact()
+			return ;
 
 		go = threading.Event()
 		def recv_thread():

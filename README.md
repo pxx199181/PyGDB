@@ -12,8 +12,9 @@
 - Documention
 - Update log
 # Introduction
-A gdb wrapper(based on `peda-arm`, modify some functions) aiming at using python to debug.
+A gdb wrapper(based on `peda-arm`, modify some functions ) aiming at using python to debug.
 
+need to install pwntools(if not use zio)
 
 ## Features
 
