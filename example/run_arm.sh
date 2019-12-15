@@ -1,0 +1,1 @@
+qemu-arm -g 4444 ./test_arm
