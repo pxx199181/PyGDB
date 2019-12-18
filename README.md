@@ -21,6 +21,8 @@ need to install pwntools(if not use zio)
 # Install
 You need to install pwntools first.
 
+git clone https://github.com/pxx199181/PyGDB/
+
 `python setup.py install`
 # Usage
 ## Template

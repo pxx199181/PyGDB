@@ -554,7 +554,11 @@ class PyGDB():
 		num = self.set_bp(addr, addr)
 		while True:
 			pc = self.Continue()
-			if pc == -1 or pc == addr:
+			if pc == -1:
+				break
+
+			if pc == addr:
+				self.del_bp(addr)
 				break
 
 	def Continue(self):
