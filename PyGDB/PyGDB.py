@@ -38,7 +38,7 @@ def split_multi(data, spec):
 	return items
 
 def encode_unicode(data):
-	return "".join(chr(ord(c)) for c in data)
+	return "".join(chr(ord(c)&0xff) for c in data)
 
 def byteify(input, encoding='utf-8'):
 	if isinstance(input, dict):
@@ -219,9 +219,8 @@ class PyGDB():
 			cmdline = "hard"
 
 		if is_pie == True:
-			if self.code_base is None:
-				self.code_base = self.codebase()
-			addr += self.code_base
+			addr += self.get_codebase()
+
 		ret_v = self.do_pygdb_ret("set_breakpoint 0x%x %s"%(addr, cmdline))
 		b_num = re.search("Breakpoint [\d+] at", ret_v)
 		if b_num :
@@ -378,18 +377,17 @@ class PyGDB():
 				if pid :
 					pid = pid.group().split()[1]
 					self.dbg_pid = int(pid)
+				else :
+					return "error"
 
-
-			with open("/proc/{}/maps".format(self.dbg_pid), "r") as maps:
-				return maps.read()
-		else :
-			return "error"
+		with open("/proc/{}/maps".format(self.dbg_pid), "r") as maps:
+			return maps.read()
 
 	def libcbase(self):
 		data = re.search(".*libc.*\.so", self.procmap())
 		if data :
 			libcaddr = data.group().split("-")[0]
-			self.libc_base = libcaddr
+			self.libc_base = int(libcaddr, 16)
 			self.do_gdb("set $libc={}".format(hex(int(libcaddr, 16))))
 			return int(libcaddr, 16)
 		else :
@@ -401,7 +399,7 @@ class PyGDB():
 		data = re.findall(pat, self.procmap())
 		if data :
 			codebaseaddr = data[0].split("-")[0]
-			self.code_base = codebaseaddr
+			self.code_base = int(codebaseaddr, 16)
 			codeend = data[0].split("-")[1].split()[0]
 			self.do_gdb("set $code={}".format(hex(int(codebaseaddr, 16))))
 			return (int(codebaseaddr, 16), int(codeend, 16))
@@ -413,12 +411,17 @@ class PyGDB():
 		data = re.search(".*heap\]", self.procmap())
 		if data :
 			heapbase = data.group().split("-")[0]
-			self.heap_base = heapbase
+			self.heap_base = int(heapbase, 16)
 			self.do_gdb("set $heap={}".format(hex(int(heapbase, 16))))
 			return int(heapbase, 16)
 		else :
 			self.heap_base = None
 			return 0
+
+	def get_codebase(self):
+		if self.code_base is None:
+			self.code_base = self.codebase()
+		return self.code_base
 
 	def codebase(self):
 		return self.codeaddr()[0]
@@ -519,7 +522,10 @@ class PyGDB():
 	def write_long_list(self, addr, data_list):
 		return self._write_mid_list(addr, data_list, 8)
 
-	def hook(self, addr, handler, args):
+	def hook(self, addr, handler, args, is_pie = False):
+		if is_pie == True:
+			addr += self.get_codebase()
+
 		if addr in self.hook_map.keys():
 			self.remove_hook(addr)
 
@@ -532,11 +538,24 @@ class PyGDB():
 			self.remove_hook(addr)
 		self.hook_map = {}
 
-	def remove_hook(self, addr):
+	def remove_hook(self, addr, is_pie = False):
+		if is_pie == True:
+			addr += self.get_codebase()
+
 		if addr in self.hook_map.keys():
 			num = self.hook_map[addr][0]
 			self.del_bp(num)
 			self.hook_map.pop(addr)
+
+	def run_until(self, addr, is_pie = False):
+		if is_pie == True:
+			addr += self.get_codebase()
+
+		num = self.set_bp(addr, addr)
+		while True:
+			pc = self.Continue()
+			if pc == -1 or pc == addr:
+				break
 
 	def Continue(self):
 		while True:
@@ -547,10 +566,10 @@ class PyGDB():
 					num, handler, args = self.hook_map[pc]
 					ret_v = handler(*args)
 					if ret_v is not None and ret_v == False:
-						break
+						return pc
 				else:
-					break
+					return pc
 			except KeyboardInterrupt:
 				print('[+]' + 'Interrupted')
 				self.interrupt_process()
-				break
+				return -1
