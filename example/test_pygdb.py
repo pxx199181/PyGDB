@@ -92,15 +92,24 @@ def test_hook():
 		else:
 			pass
 
+		if val == 5:
+			pygdb.remove_hook(0x400552)
+		else:
+			pass
+
 	pygdb = PyGDB(target_path = "./test_hook")
 	pygdb.hook(0x40054d, hook_test, [pygdb, 0, 0x40054d, "call printf",])
 	pygdb.hook(0x400552, hook_out, [pygdb, 0, 0x400552, "cmp",])
 
 	pygdb.start()
-	pygdb.Continue()
-	pygdb.clear_hook()
 
-	pygdb.stepi()
+	#pygdb.Continue()
+	#pygdb.clear_hook()
+	#pygdb.stepi()
+
+	#also can use Continue
+	pygdb.run_until(0x400562)
+
 	pygdb.interact()
 
 import sys

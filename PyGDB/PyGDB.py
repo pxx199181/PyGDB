@@ -282,11 +282,11 @@ class PyGDB():
 
 	def interrupt_process(self):
 		if self.is_local == False:
-			print("kill -2 %d"%self.gdb_pid)
+			#print("kill -2 %d"%self.gdb_pid)
 			os.system("kill -2 %d"%self.gdb_pid)
 			#os.kill(self.gdb_pid, 2)
 		else:
-			print("kill -2 %s"%self.dbg_pid)
+			#print("kill -2 %s"%self.dbg_pid)
 			os.system("kill -2 %s"%self.dbg_pid)
 
 	def hexdump(self, addr, count):
@@ -306,7 +306,7 @@ class PyGDB():
 
 	def interact(self):
 		self.do_pygdb("set_interact_mode 1")
-		print('[+]' + 'Switching to interactive mode')
+		print('[+] ' + 'Switching to interactive mode')
 		self.io.sendline("context")
 
 		if io_wrapper == "zio":
@@ -324,7 +324,7 @@ class PyGDB():
 						sys.stdout.write(cur)
 						sys.stdout.flush()
 				except EOFError:
-					print('[+]' + 'Got EOF while reading in interactive')
+					print('[+] ' + 'Got EOF while reading in interactive')
 					break
 				except KeyboardInterrupt:
 					pass
@@ -355,7 +355,7 @@ class PyGDB():
 						self.io.send(data)
 					except EOFError:
 						go.set()
-						print('[+]' + 'Got EOF while sending in interactive')
+						print('[+] ' + 'Got EOF while sending in interactive')
 					
 					if data.strip() in ["q", "quit"]:
 						self.quit()
@@ -363,7 +363,7 @@ class PyGDB():
 						go.set()
 						break
 			except KeyboardInterrupt:
-				print('[+]' + 'Interrupted')
+				print('[+] ' + 'Interrupted')
 				self.interrupt_process()
 		while t.is_alive():
 			t.join(timeout = 0.1)
@@ -570,6 +570,6 @@ class PyGDB():
 				else:
 					return pc
 			except KeyboardInterrupt:
-				print('[+]' + 'Interrupted')
+				print('[+] ' + 'Interrupted')
 				self.interrupt_process()
 				return -1
