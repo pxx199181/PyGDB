@@ -267,6 +267,24 @@ class PyGDB():
 	def set_reg(self, reg, value):
 		return self.do_pygdb_ret("set_reg %s 0x%x"%(reg, value))
 
+	def cut_str(self, data, prefix = None, suffix = None):
+		if prefix is not None:
+			b_pos = data.find(prefix)
+			if b_pos == -1:
+				return None
+			b_pos += len(prefix)
+		else:
+			b_pos = 0
+
+		if suffix is not None:
+			e_pos = data.find(suffix, b_pos)
+			if e_pos == -1:
+				return None
+		else:
+			e_pos = len(data)
+		return data[b_pos:e_pos]
+
+
 	def set_bp(self, addr, temp = False, hard = False, is_pie = False):
 		cmdline = ""
 		if temp:
@@ -274,15 +292,27 @@ class PyGDB():
 		elif hard: 
 			cmdline = "hard"
 
-		if is_pie == True:
-			addr += self.get_codebase()
+		addr = self.real_addr(addr, is_pie)
+		if type(addr) is not str:
+			addr_str = "0x%x"%addr
+		else:
+			addr_str = addr
 
-		ret_v = self.do_pygdb_ret("set_breakpoint 0x%x %s"%(addr, cmdline))
-		b_num = re.search("Breakpoint [\d+] at", ret_v)
+		ret_v = self.do_pygdb_ret("set_breakpoint %s %s"%(addr_str, cmdline))
+		#print ret_v
+		b_num = re.search("reakpoint [\d+] at", ret_v)
 		if b_num :
 			b_num = b_num.group().split()[1]
-			return int(b_num)
-		return None
+			fini_num = int(b_num)
+
+			addr_v = self.cut_str(ret_v, " %d at "%fini_num)
+			if ": " in addr_v:
+				addr_v = addr_v.split(": ")[0]
+			if addr_v is not None:
+				addr_v = int(addr_v, 16)
+
+			return fini_num, addr_v
+		return None, None
 
 	def del_bp(self, num = None):
 		cmdline = ""
@@ -578,15 +608,20 @@ class PyGDB():
 	def write_long_list(self, addr, data_list):
 		return self._write_mid_list(addr, data_list, 8)
 
+	def real_addr(self, addr, is_pie = False):
+		if type(addr) is not str:
+			if is_pie == True:
+				addr += self.get_codebase()
+		return addr
+
 	def hook(self, addr, handler, args, is_pie = False):
-		if is_pie == True:
-			addr += self.get_codebase()
+		addr = self.real_addr(addr, is_pie)
 
 		if addr in self.hook_map.keys():
 			self.remove_hook(addr)
 
-		num = self.set_bp(addr)
-		self.hook_map[addr] = [num, handler, args]
+		num, addr_v = self.set_bp(addr)
+		self.hook_map[addr_v] = [num, handler, args, addr]
 		return 
 
 	def clear_hook(self):
@@ -595,26 +630,34 @@ class PyGDB():
 		self.hook_map = {}
 
 	def remove_hook(self, addr, is_pie = False):
-		if is_pie == True:
-			addr += self.get_codebase()
+		addr = self.real_addr(addr, is_pie)
 
 		if addr in self.hook_map.keys():
 			num = self.hook_map[addr][0]
 			self.del_bp(num)
 			self.hook_map.pop(addr)
+		elif type(addr) is str:
+			for key in self.hook_map.keys():
+				if addr == self.hook_map[key][3]:
+					num = self.hook_map[key][0]
+					self.del_bp(num)
+					self.hook_map.pop(key)
+					break
 
 	def run_until(self, addr, is_pie = False):
-		if is_pie == True:
-			addr += self.get_codebase()
+		addr = self.real_addr(addr, is_pie)
 
-		num = self.set_bp(addr, addr)
+		num, addr_v = self.set_bp(addr)
+		bps = self.get_bp()
+
+		#print "num", num, "addr_v", addr_v
 		while True:
 			pc = self.Continue()
 			if pc == -1:
 				break
 
-			if pc == addr:
-				self.del_bp(addr)
+			if pc == addr_v:
+				self.del_bp(num)
 				break
 
 	def Continue(self):
@@ -623,7 +666,7 @@ class PyGDB():
 				self._continue()
 				pc = self.get_reg("pc")
 				if pc in self.hook_map.keys():
-					num, handler, args = self.hook_map[pc]
+					num, handler, args, addr = self.hook_map[pc]
 					ret_v = handler(*args)
 					if ret_v is not None and ret_v == False:
 						return pc
@@ -643,3 +686,45 @@ class PyGDB():
 
 	def unhexdump(self, data, width = 16):
 		return PyGDB_unhexdump(data, width)
+
+
+	def readString(self, addr):
+		final_data = ""
+		while True:
+			data = self.read_mem(addr+len(final_data), 0x100)
+			pos = data.find("\x00")
+			if pos != -1:
+				final_data += data[:pos]
+				break
+			if data is None or data == "":
+				break
+			final_data += data
+
+		return final_data
+
+	def mmap(self, addr, size = 0x1000, prot = 7):
+		if io_wrapper == "zio":
+			print("please install pwntools")
+			return
+
+		if self.arch == "x86-64":
+			self.arch = "amd64"
+		context(arch = self.arch, os = 'linux')
+
+		if (addr & 0xfff) != 0:
+			size = size + 0x1000 - (addr&0xfff)
+		if (size & 0xfff) != 0:
+			size = ((size/0x1000) + 1)*0x1000
+		shellcode_asm = shellcraft.mmap(addr, size, prot, 0x22, -1, 0)
+		shellcode = asm(shellcode_asm)
+
+		pc = self.get_reg("pc")
+		old_data = self.read_mem(pc, len(shellcode))
+		self.write_mem(pc, shellcode)
+
+		self.run_until(pc + len(shellcode))
+		self.write_mem(pc, old_data)
+		self.set_reg("pc", pc)
+
+
+
