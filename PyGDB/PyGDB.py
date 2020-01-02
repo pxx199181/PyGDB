@@ -19,8 +19,9 @@ import os
 import json
 import re
 import threading
-
+import string
 import sys
+
 reload(sys)
 sys.setdefaultencoding('utf-8')
 
@@ -50,6 +51,61 @@ def byteify(input, encoding='utf-8'):
 		return encode_unicode(input)
 	else:
 		return input
+
+
+alpha_bet_printable = string.printable[:-5]
+def PyGDB_hexdump(data, addr = 0, show = True, width = 16):
+	ascii_info = ""
+	line_info = ""
+	all_info = ""
+	half_width = width / 2
+
+	for i in range(len(data)):
+		if i % width == 0:
+			all_info += "0x%08x: "%(i + addr)
+
+		line_info += "%02x "%ord(data[i])
+
+		if i%half_width == half_width-1:
+			line_info += " "
+
+		if data[i] in alpha_bet_printable:
+			ascii_info += data[i]
+		else:
+			ascii_info += "."
+
+		if i % width == width - 1:
+			all_info += line_info + ascii_info + "\n"
+			ascii_info = ""
+			line_info = ""
+
+	if ascii_info != "":
+		all_info += line_info.ljust(3*width + 2, ' ') + ascii_info
+		ascii_info = ""
+		line_info = ""
+	else:
+		all_info = all_info[:-1]
+
+	if show:
+		print all_info
+	return all_info
+
+
+def PyGDB_unhexdump(data, width = 16):
+	final_data = ""
+	for line in data.split("\n"):
+		if ": " in line:
+			line = line[line.index(": ") + 2:]
+		line = line.strip()
+
+		#print "line:", line, len(line), width*3
+		if len(line) == 0:
+			continue
+
+		line = line[:width*3+1]
+		final_data += line.replace(" ", "").decode("hex")
+
+	return final_data
 
 class PyGDB():
 	def __init__(self, target_path = None, arch = None):
@@ -577,3 +633,13 @@ class PyGDB():
 				print('[+] ' + 'Interrupted')
 				self.interrupt_process()
 				return -1
+
+	def hexdump(self, addr = 0, size = 0x10, show = True, width = 16, data = None):
+		if data is not None:
+			return PyGDB_hexdump(data, addr, show, width)
+		else:
+			data = self.read_mem(addr, size)
+			return PyGDB_hexdump(data, addr, show, width)
+
+	def unhexdump(self, data, width = 16):
+		return PyGDB_unhexdump(data, width)
