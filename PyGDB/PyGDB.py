@@ -375,7 +375,7 @@ class PyGDB():
 			#print("kill -2 %s"%self.dbg_pid)
 			os.system("kill -2 %s"%self.dbg_pid)
 
-	def hexdump(self, addr, count):
+	def _hexdump(self, addr, count):
 		return self.do_pygdb_ret("hexdump 0x%x 0x%x"%(addr, count))
 
 	def kill(self):
