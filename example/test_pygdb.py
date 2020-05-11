@@ -112,11 +112,73 @@ def test_hook():
 
 	pygdb.interact()
 
+def test_mmap():
+	pygdb = PyGDB(target_path = "./test_hook")
+	#pygdb.
+	bp_id, bp_addr = pygdb.set_bp("main")
+	#pygdb.interact()
+	pygdb.start()
+	pygdb.del_bp(bp_id)
+	#print(pygdb.get_code(20))
+
+	c_source = """
+	void write_diy(int fd, char* data, int size);
+	int strlen_diy(char *data);
+	void upper_str(char *data, char val) {
+		int len = strlen_diy(data);
+		for(int i = 0; i < len; i++)
+			if (data[i] > 0x20 && data[i] < 0x80) {
+				data[i] |= val;
+				data[i] -= 0x20;
+			}
+	}
+	void print(void *data) {
+		write_diy(1, data, strlen_diy(data));
+	}
+	void write_diy(int fd, char* data, int size) {
+		__asm__(
+		"mov $0x1, %eax\\t\\n"
+		"syscall\\t\\n"
+		);
+	}
+	int strlen_diy(char *data) {
+		int i;
+		for(i = 0; ; i++)
+			if (data[i] == 0) 
+				return i;
+	}
+	"""
+	code_data = pygdb.gen_payload(c_source, "upper_str")
+	code_addr = 0x8304000
+	data_addr = 0x8300000
+	#print data.encode("hex")
+
+
+	map_config = {
+		data_addr:[0x1000, "rw"],
+		code_addr:[0x2000, "wx"],
+	}
+	data_config = {
+		data_addr:"welcome to use PyGDB", 
+		code_addr:code_data, 
+	}
+
+	pygdb.init_map_config(map_config)
+	pygdb.init_data_config(data_config)
+
+	args = [data_addr, 0x20]
+	pygdb.call(code_addr, args)
+
+	str_info = pygdb.readString(data_addr)
+	print str_info
+	return
+
+
 import sys
 if __name__ == "__main__":
 	if len(sys.argv) < 2:
 		print "useage:"
-		print "\t python test_pygdb.py intel/arm/hook"
+		print "\t python test_pygdb.py intel/arm/hook/mmap"
 	else:
 		if sys.argv[1] == "intel":
 			test_intel()
@@ -125,3 +187,5 @@ if __name__ == "__main__":
 			test_arm()
 		elif sys.argv[1] == "hook":
 			test_hook()
+		elif sys.argv[1] == "mmap":
+			test_mmap()

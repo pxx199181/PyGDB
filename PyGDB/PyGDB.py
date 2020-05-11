@@ -731,7 +731,7 @@ class PyGDB():
 
 	def prot_eval(self, prot_value):
 
-		if tpye(prot_value) != str:
+		if type(prot_value) != str:
 			return prot_value
 
 		flag = 0
@@ -769,7 +769,7 @@ class PyGDB():
 		"""
 		for addr in data_config.keys():
 			value = data_config[addr]
-			if tpye(value) == str:
+			if type(value) == str:
 				data = value
 			elif len(value) == 1:
 				data = value[0]
@@ -794,7 +794,7 @@ class PyGDB():
 			size = value[1]
 			self.write_mem(addr, data[offset:offset+size])
 
-	def call_func(self, func_addr, args, use_addr = None):
+	def call(self, func_addr, args, use_addr = None):
 		"""
 		args = [arg0, arg1, arg2, ...]
 		"""
@@ -863,3 +863,63 @@ class PyGDB():
 
 		return
 
+	def run_cmd(self, cmd_line):
+		import commands
+		(status, data) = commands.getstatusoutput(cmd_line)
+		return data
+
+	def gen_rand_str(self, size = 16):
+		import string
+		import random
+		data = ""
+		alpha_bet = string.ascii_letters  + string.digits + "_"
+		while len(data) < size:
+			idx = random.randint(0, len(alpha_bet) - 1)
+			data += alpha_bet[idx]
+
+		return data
+
+
+	def gen_payload(self, source_data, entry_name, gcc_path = "gcc", option = ""):
+		
+		if io_wrapper == "zio":
+			print("please install pwntools")
+			return 
+
+		option += " -fno-stack-protector"
+		if self.arch.lower() not in ["arm", "arch64"]:
+			if "64" not in self.arch:
+				option += " -m32"
+
+		c_model = ""
+		c_model += source_data + "\n"
+		c_model += "int main() {\n"
+		c_model += "}"
+		
+		obj_name = "/tmp/%s"%self.gen_rand_str()
+		cfile_name = obj_name + ".c"
+		#print c_model
+		self.writefile(cfile_name, c_model)
+		cmdline = "%s -o %s %s %s"%(gcc_path, obj_name, cfile_name, option)
+		res = self.run_cmd(cmdline)
+		if ("error: " not in res.lower()):
+			elf_info = ELF(obj_name)
+
+			entry_addr = elf_info.symbols[entry_name]
+			main_addr = elf_info.symbols["main"]
+
+			size = main_addr - entry_addr
+			data = elf_info.read(entry_addr, size)
+		else:
+			print res
+			data = "error"
+
+		import os
+		os.unlink(cfile_name)
+		os.unlink(obj_name)
+
+		return data
+
+
+
+	
