@@ -300,7 +300,7 @@ class PyGDB():
 
 		ret_v = self.do_pygdb_ret("set_breakpoint %s %s"%(addr_str, cmdline))
 		#print ret_v
-		b_num = re.search("reakpoint [\d+] at", ret_v)
+		b_num = re.search("reakpoint \d+ at", ret_v)
 		if b_num :
 			b_num = b_num.group().split()[1]
 			fini_num = int(b_num)
@@ -702,7 +702,7 @@ class PyGDB():
 
 		return final_data
 
-	def mmap(self, addr, size = 0x1000, prot = 7):
+	def mmap(self, addr, size = 0x1000, prot_value = 7):
 		if io_wrapper == "zio":
 			print("please install pwntools")
 			return
@@ -715,6 +715,9 @@ class PyGDB():
 			size = size + 0x1000 - (addr&0xfff)
 		if (size & 0xfff) != 0:
 			size = ((size/0x1000) + 1)*0x1000
+
+		prot = self.prot_eval(prot_value)
+
 		shellcode_asm = shellcraft.mmap(addr, size, prot, 0x22, -1, 0)
 		shellcode = asm(shellcode_asm)
 
@@ -726,5 +729,137 @@ class PyGDB():
 		self.write_mem(pc, old_data)
 		self.set_reg("pc", pc)
 
+	def prot_eval(self, prot_value):
 
+		if tpye(prot_value) != str:
+			return prot_value
+
+		flag = 0
+		if "r" in prot_value:
+			flag |= 0x1
+		if "w" in prot_value:
+			flag |= 0x2
+		if "x" in prot_value:
+			flag |= 0x4
+		return flag
+
+	def init_map_config(self, map_config):
+		"""
+		map_config = {
+			va: [size, "rwx"]
+		}
+		"""
+		for addr in map_config.keys():
+			value = map_config[addr]
+			size = value[0]
+			flag = value[1]
+			self.mmap(addr, size, flag)
+
+	def readfile(self, filename, mode = "rb"):
+		with open(filename, mode) as fd:
+			return fd.read()
+
+	def init_data_config(self, data_config):
+		"""
+		data_config = {
+			va: data
+			va: [data]
+			va: [filename, offset, size]
+		}
+		"""
+		for addr in data_config.keys():
+			value = data_config[addr]
+			if tpye(value) == str:
+				data = value
+			elif len(value) == 1:
+				data = value[0]
+			elif len(value) == 3:
+				filename = value[0]
+				offset = value[1]
+				size = value[2]
+				data = self.readfile(filename)[offset:offset+size]
+			self.write_mem(addr, data)
+
+	def init_file_config(self, filename, file_config):
+		"""
+		filename
+		file_config = {
+			va: [offset, size]
+		}
+		"""
+		data = self.readfile(filename)
+		for addr in file_config.keys():
+			value = file_config[addr]
+			offset = value[0]
+			size = value[1]
+			self.write_mem(addr, data[offset:offset+size])
+
+	def call_func(self, func_addr, args, use_addr = None):
+		"""
+		args = [arg0, arg1, arg2, ...]
+		"""
+		if io_wrapper == "zio":
+			print("please install pwntools")
+			return 
+
+		pc = self.get_reg("pc")
+		sp = self.get_reg("sp")
+		old_data = ""
+		if use_addr is None:
+			use_addr = pc
+			old_data = self.read_mem(pc, 0x10)
+		else:
+			self.set_reg("pc", use_addr)
+
+		asm_info = ""
+		asm_info += "call 0x%x\n"%func_addr
+		asm_info += "nop"
+
+		data = asm(asm_info ,vma = use_addr, arch = self.arch, os = "linux")
+		#print data
+		disasm_info = disasm(data, vma = use_addr, arch = self.arch, os = "linux")
+		#print disasm_info
+		addr_hex = disasm_info.strip().split("\n")[1].split(":")[0].strip()
+		next_addr = int(addr_hex, 16)
+		
+		#sp = self.get_reg("sp")
+		self.write_mem(use_addr, data)
+
+		repair_stack_offset = 0
+		if "arm" in self.arch:
+			for i in range(len(args)):
+				self.set_reg("r%d"%i, args[i])
+		else:
+			if "64" in self.arch:
+				reg_names = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"]
+
+				less_count = 6 if (len(args) > 6) else len(args)
+
+				for i in range(less_count):
+					self.set_reg(reg_names[i], args[i])
+
+				if len(args) > 6:
+					for i in range(len(args)-6):
+						self.write(sp - i*8, args[i+6])
+
+					self.set_reg("sp", sp-(len(args)-6)*8)
+			else:
+				for i  in range(len(args)):
+					for i in range(len(args)):
+						self.write(sp - i*4, args[i])
+
+					self.set_reg("sp", sp-len(args)*4)
+
+		self.stepo()
+		cur_pc = self.get_reg("pc")
+		if cur_pc != next_addr:
+			self.interact()
+
+		#self.del_bp(bp_num)
+		self.set_reg("pc", pc)
+		self.set_reg("sp", sp)
+		if old_data != "":
+			self.write_mem(pc, old_data)
+
+		return
 
