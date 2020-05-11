@@ -8,6 +8,7 @@
         - test x86/x64
         - test arm
         - test hook
+        - test mmap
     - More
 - Documention
 - Update log
