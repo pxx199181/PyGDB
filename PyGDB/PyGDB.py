@@ -759,6 +759,10 @@ class PyGDB():
 		with open(filename, mode) as fd:
 			return fd.read()
 
+	def writefile(self, filename, data, mode = "wb"):
+		with open(filename, mode) as fd:
+			return fd.write(data)
+
 	def init_data_config(self, data_config):
 		"""
 		data_config = {
