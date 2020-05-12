@@ -148,10 +148,16 @@ class PyGDB():
 		if self.arch is None:
 			self.arch = "i386"
 
+		self.arch_args = []
 		if self.arch.lower() in ["arch64", "arm"]:
 			self.peda_file = os.path.join(peda_dir, "peda-arm.py")
+			
+			for i in range(13):
+				self.arch_args.append("r%d"%i)
 		else:
 			self.peda_file = os.path.join(peda_dir, "peda-intel.py")
+			if "64" in self.arch:
+				self.arch_args = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"]
 
 		self.gdb_argv = []
 		self.gdb_argv.append(self.gdb_path)
@@ -904,7 +910,7 @@ class PyGDB():
 		return data
 
 
-	def gen_payload(self, source_data, entry_name, gcc_path = "gcc", option = ""):
+	def gen_payload(self, source_data, entry_name, gcc_path = "gcc", option = "", obj_name = None):
 		
 		if io_wrapper == "zio":
 			print("please install pwntools")
@@ -915,12 +921,18 @@ class PyGDB():
 			if "64" not in self.arch:
 				option += " -m32"
 
+		source_data = self.gen_from_pwntools(source_data)
+
 		c_model = ""
 		c_model += source_data + "\n"
 		c_model += "int main() {\n"
 		c_model += "}"
+
+		auto_gen = False
+		if obj_name is None:
+			obj_name = "/tmp/%s"%self.gen_rand_str()
+			auto_gen = True
 		
-		obj_name = "/tmp/%s"%self.gen_rand_str()
 		cfile_name = obj_name + ".c"
 		#print c_model
 		self.writefile(cfile_name, c_model)
@@ -938,9 +950,10 @@ class PyGDB():
 			print res
 			data = "error"
 
-		import os
-		os.unlink(cfile_name)
-		os.unlink(obj_name)
+		if auto_gen:
+			import os
+			os.unlink(cfile_name)
+			os.unlink(obj_name)
 
 		return data
 
@@ -992,4 +1005,61 @@ class PyGDB():
 		self.writefile(outfile, data)
 
 
+	def gen_from_pwntools(self, c_source):
+		name_map = {}
+		start_model = "gen_from_pwntools("
+
+		prefix_list = []
+		suffix_list = []
+		mid_list = []
+		for line in c_source.split("\n"):
+			line_new = line.strip()
+			if line_new.startswith(start_model):
+				pos_e = line_new.rfind(")")
+				if pos_e == -1:
+					continue
+				voto_info = line_new[len(start_model):pos_e].replace("\t", " ")
+				while voto_info.find("  ") != -1:
+					voto_info = line_new.replace("  ", " ")
+				name = voto_info.split(" ")[1].split("(")[0]
+				
+				args_count = len(voto_info.split(","))
+				code_asm = ""
+				if args_count > 1:
+					if "i386" in self.arch.lower():
+						#code_asm = getattr(shellcraft, name)(self.arch_args[:args_count])
+						args_name = ["eax", "ebx", "ecx", "edx", "edi", "esi", "ebp"]
+						in_arg_list = []
+						for i in range(args_count):
+							code_asm += "push %s\n"%args_name[i]
+							in_arg_list.append(args_name[i])
+						code_asm += getattr(shellcraft, name)(*(args_name[:args_count]))
+						for i in range(args_count-1, -1, -1):
+							code_asm += "pop %s\n"%args_name[i]
+							in_arg_list.append(args_name[i])
+					else:
+						print getattr(shellcraft, name)("rdi", "rsi")
+						print shellcraft.write(*(self.arch_args[:args_count]))
+						print getattr(shellcraft, name)(*(self.arch_args[:args_count]))
+						code_asm = getattr(shellcraft, name)(*(self.arch_args[:args_count]))
+				else:
+					code_asm = getattr(shellcraft, name)()
+
+				inject_asm = self.gen_inject_asm(code_asm)
+				
+				prefix_list.append(voto_info + ";")
+
+				define_content = ""
+				define_content += voto_info + "{\n"
+				define_content += inject_asm + "\n"
+				define_content += "}"
+
+				suffix_list.append(define_content)
+
+			else:
+				mid_list.append(line)
+		new_content = ""
+		new_content += "\n".join(prefix_list + mid_list + suffix_list)
+
+		return new_content
 

@@ -221,15 +221,18 @@ def test_mmap():
     int write_diy(int fd, char* data, int size);
     int open_diy(char *filename, int md, int flag);
     int strlen_diy(char *data);
+    void close_diy(int fd);
+    gen_from_pwntools(int write(int fd, char* data, int size));
+    gen_from_pwntools(int open(char* filename, int mode, int flag));
     int upper_str(char *data, char val) {
         char filename[10];
         %s
         char endl[16];
         %s
         int len = strlen_diy(data);
-        //int fd = open_diy(filename, 0666);
-        int fd = open_diy(filename, 0x42, 0755);
-        write_diy(fd, data, len);
+        //int fd = open(filename, 0666);
+        int fd = open(filename, 0x42, 0755);
+        write(fd, data, len);
         for(int i = 0; i < len; i++)
             if (data[i] > 0x20 && data[i] < 0x80) {
                 data[i] |= val;
@@ -237,6 +240,7 @@ def test_mmap():
             }
         write_diy(fd, endl, 1);
         write_diy(fd, data, len);
+        close_diy(fd);
         return len;
     }
     int print(void *data) {
@@ -248,9 +252,6 @@ def test_mmap():
         "syscall\\t\\n"
         );
     }
-    int open_diy(char *filename, int md, int flag) {
-        %s
-    }
     void close_diy(int fd) {
         %s
     }
@@ -260,10 +261,9 @@ def test_mmap():
             if (data[i] == 0) 
                 return i;
     }
-    """%(filename, endl, open_code, close_code)
-    print c_source
+    """%(filename, endl, close_code)
 
-    code_data = pygdb.gen_payload(c_source, "upper_str")
+    code_data = pygdb.gen_payload(c_source, "upper_str")#, obj_name = "uuu_obj")
     code_addr = 0x8304000
     data_addr = 0x8300000
     #print data.encode("hex")
@@ -284,6 +284,9 @@ def test_mmap():
     args = [data_addr, 0x20]
 
     code_asm = pygdb.get_code(code_addr, 0x100)
+    print "code_asm:"
+    print code_asm
+    code_asm = pygdb.get_code(0x830417e, 0x50)
     print "code_asm:"
     print code_asm
     
