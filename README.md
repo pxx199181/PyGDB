@@ -9,6 +9,7 @@
         - test arm
         - test hook
         - test mmap
+        - test patch
     - More
 - Documention
 - Update log
