@@ -120,6 +120,7 @@ class PyGDB():
 			while os.path.islink(target_path):
 				target_path = os.path.abspath(os.path.join(os.path.dirname(target_path), os.path.expanduser(os.readlink(target_path))))
 		
+		self.globals = {}
 		self.arch = arch
 		self.hook_map = {}
 		self.io = None
@@ -177,12 +178,12 @@ class PyGDB():
 				capsize = 8
 				word = "gx "
 				arch = "x86-64"
-				return "x86-64"
-			elif "aarch64" in info :
+				return "amd64"
+			elif "arch64" in info :
 				capsize = 8
 				word = "gx "
-				arch = "aarch64"
-				return "aarch64"
+				arch = "arch64"
+				return "arch64"
 			elif "arm" in info :
 				capsize = 4
 				word = "wx "
@@ -830,7 +831,9 @@ class PyGDB():
 		self.write_mem(use_addr, data)
 
 		repair_stack_offset = 0
-		if "arm" in self.arch:
+
+
+		if self.arch.lower() in ["arm", "arch64"]:
 			for i in range(len(args)):
 				self.set_reg("r%d"%i, args[i])
 		else:
@@ -854,7 +857,11 @@ class PyGDB():
 
 					self.set_reg("sp", sp-len(args)*4)
 
-		self.stepo()
+		if len(self.hook_map.keys()) != 0:
+			self.run_until(next_addr)
+		else:
+			self.stepo()
+
 		cur_pc = self.get_reg("pc")
 		if cur_pc != next_addr:
 			self.interact()
@@ -865,7 +872,16 @@ class PyGDB():
 		if old_data != "":
 			self.write_mem(pc, old_data)
 
-		return
+		ret_v = 0
+		if self.arch.lower() in ["arm", "arch64"]:
+			ret_v = self.get_reg("r0")
+		else:
+			if "64" in self.arch:
+				ret_v = self.get_reg("rax")
+			else:
+				ret_v = self.get_reg("eax")
+
+		return ret_v
 
 	def run_cmd(self, cmd_line):
 		import commands
@@ -926,4 +942,4 @@ class PyGDB():
 
 
 
-	
+

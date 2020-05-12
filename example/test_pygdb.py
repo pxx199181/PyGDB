@@ -124,13 +124,14 @@ def test_mmap():
 	c_source = """
 	void write_diy(int fd, char* data, int size);
 	int strlen_diy(char *data);
-	void upper_str(char *data, char val) {
+	int upper_str(char *data, char val) {
 		int len = strlen_diy(data);
 		for(int i = 0; i < len; i++)
 			if (data[i] > 0x20 && data[i] < 0x80) {
 				data[i] |= val;
 				data[i] -= 0x20;
 			}
+		return len;
 	}
 	void print(void *data) {
 		write_diy(1, data, strlen_diy(data));
@@ -167,7 +168,28 @@ def test_mmap():
 	pygdb.init_data_config(data_config)
 
 	args = [data_addr, 0x20]
-	pygdb.call(code_addr, args)
+
+	code_asm = pygdb.get_code(code_addr, 0x60)
+	print "code_asm:"
+	print code_asm
+
+
+	
+	def hook_count(pygdb, id, addr, value):
+		#rdi = pygdb.
+		pygdb.globals["count"] += 1
+		if pygdb.globals["count"] > 5:
+			pygdb.remove_hook(addr)
+			del pygdb.globals["count"]
+			return
+		print "count", pygdb.globals["count"]
+
+	pygdb.globals["count"] = 0
+	pygdb.hook(0x8304029, hook_count, [pygdb, 0, 0x8304029, "call 0x8304029",])
+
+	ret_v = pygdb.call(code_addr, args)
+	print "ret_v:", repr(ret_v), type(ret_v)
+	print pygdb.globals
 
 	str_info = pygdb.readString(data_addr)
 	print str_info
