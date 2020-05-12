@@ -138,11 +138,15 @@ class PyGDB():
 			print("'GDB is not installed\n$ apt-get install gdb'")
 			exit(0)
 
+		self.bin_path = None
 		if target_path is not None:
 			self.bin_path = target_path
 
 			if (self.arch == None):
 				self.arch = self.getarch()
+
+		if self.arch is None:
+			self.arch = "i386"
 
 		if self.arch.lower() in ["arch64", "arm"]:
 			self.peda_file = os.path.join(peda_dir, "peda-arm.py")
@@ -459,7 +463,7 @@ class PyGDB():
 		if self.dbg_pid is None:
 			self.dbg_pid = self.get_dbg_pid()
 			if self.dbg_pid is None:
-				data = pygdb.do_gdb_ret("info proc exe")
+				data = self.do_gdb_ret("info proc exe")
 				pid = re.search("process.*", data)
 				if pid :
 					pid = pid.group().split()[1]
@@ -940,6 +944,52 @@ class PyGDB():
 
 		return data
 
+	def gen_inject_asm(self, code_asm):
+		if io_wrapper == "zio":
+			print("please install pwntools")
+			return
+
+		if self.arch == "x86-64":
+			self.arch = "amd64"
+		context(arch = self.arch, os = 'linux')
+		
+		code_data = asm(code_asm, arch = self.arch, os = "linux")
+		content = ""
+		content += "__asm__ __volatile__(\""
+		content += "".join([".byte 0x%x;"%ord(c) for c in code_data])
+		content += "\"::);"
+		return content
+
+	def gen_stack_value(self, name, value = ""):
+		#print "char %s[%d];"%(n_s, len(name))
+		content = ""
+		for i in range(len(value)/4):
+			content += "*(unsigned int*)(&%s[0x%x]) = 0x%x;\n"%(name, i*4, u32(value[i*4:i*4+4]))
+
+		cur_pos = (len(value)/4)*4
+		if len(value) - cur_pos >= 2:
+			content += "*(unsigned short int*)(&%s[0x%x]) = 0x%x;\n"%(name, cur_pos, u16(value[cur_pos:cur_pos+2]))
+			cur_pos += 2
+		if len(value) - cur_pos >= 1:
+			content += "*(unsigned char*)(&%s[0x%x]) = 0x%x;\n"%(name, cur_pos, u8(value[cur_pos:cur_pos+2]))
+			cur_pos += 1
+
+		return content
+
+	def patch_file(self, infile, patch_config, outfile = None):
+		"""
+		patch_config:
+		{
+			offset: data
+		}
+		"""
+		def patch_data(data, offset, content):
+			return data[:offset] + content + data[offset + len(content):]
+
+		data = self.readfile(infile)
+		for offset in patch_config:
+			data = patch_data(data, offset, patch_config[offset])
+		self.writefile(outfile, data)
 
 
 
