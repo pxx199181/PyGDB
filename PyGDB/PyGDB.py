@@ -109,6 +109,9 @@ def PyGDB_unhexdump(data, width = 16):
 
 class PyGDB():
 	def __init__(self, target_path = None, arch = None):
+		self.load_init(target_path, arch)
+
+	def load_init(self, target_path = None, arch = None):
 		PYGDBFILE = os.path.abspath(os.path.expanduser(__file__))
 		#print("PYGDBFILE:", PYGDBFILE)
 		while os.path.islink(PYGDBFILE):
@@ -172,7 +175,6 @@ class PyGDB():
 
 		if self.bin_path is not None:
 			self.do_gdb("file %s"%self.bin_path)
-
 
 	def getarch(self):
 		capsize = 0
@@ -718,8 +720,6 @@ class PyGDB():
 			print("please install pwntools")
 			return
 
-		if self.arch == "x86-64":
-			self.arch = "amd64"
 		context(arch = self.arch, os = 'linux')
 
 		if (addr & 0xfff) != 0:
@@ -909,6 +909,16 @@ class PyGDB():
 
 		return data
 
+	def compile_cfile(self, source, gcc_path, option, infile, outfile):
+		self.writefile(infile, source)
+		cmdline = "%s %s -o %s %s"%(gcc_path, option, outfile, infile)
+		res = self.run_cmd(cmdline)
+		if ("error: " not in res.lower()):
+			return True
+		else:
+			print res
+			return False
+
 
 	def gen_payload(self, source_data, entry_name, gcc_path = "gcc", option = "", obj_name = None):
 		
@@ -916,29 +926,34 @@ class PyGDB():
 			print("please install pwntools")
 			return 
 
-		option += " -fno-stack-protector"
+		if option == "":
+			option += " -fno-stack-protector"
+
 		if self.arch.lower() not in ["arm", "arch64"]:
 			if "64" not in self.arch:
 				option += " -m32"
 
 		source_data = self.gen_from_pwntools(source_data)
 
-		c_model = ""
-		c_model += source_data + "\n"
-		c_model += "int main() {\n"
-		c_model += "}"
+		source = ""
+		source += source_data + "\n"
+		source += "int main() {\n"
+		source += "}"
 
 		auto_gen = False
 		if obj_name is None:
-			obj_name = "/tmp/%s"%self.gen_rand_str()
+			self.run_cmd("mkdir -p /tmp/.PyGDB")
+			obj_name = "/tmp/.PyGDB/%s"%self.gen_rand_str()
 			auto_gen = True
 		
 		cfile_name = obj_name + ".c"
-		#print c_model
-		self.writefile(cfile_name, c_model)
-		cmdline = "%s -o %s %s %s"%(gcc_path, obj_name, cfile_name, option)
-		res = self.run_cmd(cmdline)
-		if ("error: " not in res.lower()):
+		#print source
+		#self.writefile(cfile_name, source)
+		#cmdline = "%s %s -o %s %s"%(gcc_path, option, obj_name, cfile_name)
+		#res = self.run_cmd(cmdline)
+		res = self.compile_cfile(source, gcc_path, option, cfile_name, obj_name)
+
+		if res == True:
 			elf_info = ELF(obj_name)
 
 			entry_addr = elf_info.symbols[entry_name]
@@ -947,7 +962,6 @@ class PyGDB():
 			size = main_addr - entry_addr
 			data = elf_info.read(entry_addr, size)
 		else:
-			print res
 			data = "error"
 
 		if auto_gen:
@@ -961,9 +975,6 @@ class PyGDB():
 		if io_wrapper == "zio":
 			print("please install pwntools")
 			return
-
-		if self.arch == "x86-64":
-			self.arch = "amd64"
 		context(arch = self.arch, os = 'linux')
 		
 		code_data = asm(code_asm, arch = self.arch, os = "linux")
@@ -989,20 +1000,46 @@ class PyGDB():
 
 		return content
 
-	def patch_file(self, infile, patch_config, outfile = None):
+	def _asm_(self, asm_info, va):
+		if io_wrapper == "zio":
+			print("please install pwntools")
+			return
+		context(arch = self.arch, os = 'linux')
+		return asm(asm_info, vma = va)
+
+	def patch_file(self, infile, patch_config, outfile = None, base = 0):
 		"""
 		patch_config:
 		{
-			offset: data
+			offset: data,
+			offset: [data],
+			offset: ["asm", data_asm],
+			offset: ["data", data],
 		}
 		"""
 		def patch_data(data, offset, content):
 			return data[:offset] + content + data[offset + len(content):]
 
-		data = self.readfile(infile)
-		for offset in patch_config:
-			data = patch_data(data, offset, patch_config[offset])
-		self.writefile(outfile, data)
+		file_data = self.readfile(infile)
+		for addr in patch_config:
+			print addr
+			value = patch_config[addr]
+			data = ""
+			if type(value) == str:
+				data = value
+				
+			else:
+				if len(value) == 1:
+					data = value[0]
+				elif value[0] == "data":
+					data = value[1]
+				elif value[0] == "asm":
+					data = self._asm_(value[1], addr)
+			file_data = patch_data(file_data, addr - base, data)
+
+		if outfile is None:
+			outfile = infile
+		self.writefile(outfile, file_data)
 
 
 	def gen_from_pwntools(self, c_source):
@@ -1062,4 +1099,27 @@ class PyGDB():
 		new_content += "\n".join(prefix_list + mid_list + suffix_list)
 
 		return new_content
+
+	def load_source(self, arch = "amd64", source = "", text_addr = None, gcc_path = "gcc", obj_name = None):
+		option = ""
+		self.arch = arch
+		if text_addr is not None:
+			option += " -Wl,-Ttext-segment=0x%x"%text_addr
+
+		if obj_name is None:
+			self.run_cmd("mkdir -p /tmp/.PyGDB")
+			obj_name = "/tmp/.PyGDB/%s"%self.gen_rand_str()
+
+		if source == "":
+			source = """
+#include <stdio.h>
+int main() {
+	printf("hello world\\n");
+	return 0;
+}
+			"""
+		res = self.compile_cfile(source, gcc_path, option, obj_name + ".c", obj_name)
+		print "gen objfile @ %s"%obj_name
+		self.load_init(target_path = obj_name)
+
 

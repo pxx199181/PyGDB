@@ -226,17 +226,34 @@ def test_mmap():
 def test_patch():
 	
 	#pygdb = PyGDB(target_path = "./test_hook")
-	pygdb = PyGDB()
+	pygdb = PyGDB(arch = "amd64")
+	pygdb.writefile("test_patch", "SADKNJASNDKNSADNKJSANDSADKNJASNDKNSADNKJSANDSADKNJASNDKNSADNKJSAND")
 
 	patch_config = {
 		0 : "ni",
 		4 : "wo",
 		10 : "ha",
-
 	}
-
-	pygdb.writefile("test_patch", "SADKNJASNDKNSADNKJSAND")
 	pygdb.patch_file("test_patch", patch_config, "test_patch.out")
+
+	asm_info = """
+	mov rax, rbx
+	push rsp
+	"""
+	patch_config = {
+		0x400010 : "12",
+		0x400020 : ["data", "33"],
+		0x400024 : ["asm", asm_info],
+	}
+	pygdb.patch_file("test_patch.out", patch_config, base = 0x400000)
+
+
+	pygdb = PyGDB()
+	pygdb.load_source(arch = "amd64", text_addr = 0x8300000)
+	pygdb.set_bp("main")
+	pygdb.start()
+
+	pygdb.interact()
 
 
 import sys
