@@ -403,10 +403,10 @@ TODO
 
 ## 2020/05/13 Version 1.0.0
 - add some useful function
-- 1. mmap area
-- 2. call func
-- 3. init map from config
-- 4. init data from config
-- 5. init data from file
-- 6. gen shellcode from source(with pwntools)
-- 7. patch file
+- (1). mmap area
+- (2). call func
+- (3). init map from config
+- (4). init data from config
+- (5). init data from file
+- (6). gen shellcode from source(with pwntools)
+- (7). patch file
