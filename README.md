@@ -385,6 +385,11 @@ test mmap demo.
 
 run 'python test_pygdb.py mmap'
 
+### test patch
+test patch demo.
+
+run 'python test_pygdb.py patch'
+
 ## More
 read the code!
 
@@ -394,3 +399,14 @@ TODO
 # Update Log 
 ## 2019/12/15 Version 1.0.0
 - release it
+- python gdb wrapper
+
+## 2020/05/13 Version 1.0.0
+- add some useful function
+- 1. mmap area
+- 2. call func
+- 3. init map from config
+- 4. init data from config
+- 5. init data from file
+- 6. gen shellcode from source(with pwntools)
+- 7. patch file
