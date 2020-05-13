@@ -924,7 +924,8 @@ class PyGDB():
 		
 		if io_wrapper == "zio":
 			print("please install pwntools")
-			return 
+			return
+		context(arch = self.arch, os = 'linux')
 
 		if option == "":
 			option += " -fno-stack-protector"
@@ -1040,6 +1041,7 @@ class PyGDB():
 		if outfile is None:
 			outfile = infile
 		self.writefile(outfile, file_data)
+		self.run_cmd("chmod +x %s"%outfile)
 
 
 	def gen_from_pwntools(self, c_source):
