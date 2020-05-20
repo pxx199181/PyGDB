@@ -124,6 +124,7 @@ class PyGDB():
 				target_path = os.path.abspath(os.path.join(os.path.dirname(target_path), os.path.expanduser(os.readlink(target_path))))
 		
 		self.globals = {}
+		self.priv_globals = {}
 		self.arch = arch
 		self.hook_map = {}
 		self.io = None
@@ -815,7 +816,7 @@ class PyGDB():
 			size = value[1]
 			self.write_mem(addr, data[offset:offset+size])
 
-		def call(self, func_addr, args, use_addr = None):
+	def call(self, func_addr, args, use_addr = None):
 		"""
 		args = [arg0, arg1, arg2, ...]
 		"""
@@ -931,7 +932,6 @@ class PyGDB():
 
 		return ret_v
 
-
 	def get_symbol_value(self, name):
 		data = self.do_gdb_ret("print %s"%name)
 		pos_b = data.find(" 0x")
@@ -941,42 +941,85 @@ class PyGDB():
 		real_addr = int(value, 16)
 		return real_addr
 
-	def fix_got(self, got_name, got_addr,  dlsym = True, libc_path = None):
+	def fix_got(self, got_name, got_addr,  dlsym = True, lib_path = None):
 
 		if got_name.endswith("\x00") == False:
 			got_name += "\x00"
 
 		if dlsym == True:
-			if "libc_handle" not in self.globals.keys():
-				self.globals["__libc_dlopen_mode"] = self.get_symbol_value("__libc_dlopen_mode")
-				self.globals["__libc_dlsym"] = self.get_symbol_value("__libc_dlsym")
+			if "dlopen" not in self.priv_globals.keys():
+				self.priv_globals["__libc_dlopen_mode"] = self.get_symbol_value("__libc_dlopen_mode")
+				self.priv_globals["__libc_dlsym"] = self.get_symbol_value("__libc_dlsym")
 				args = ["libdl.so.2\x00", 0x80000001]
-				libdl_handle = self.call(self.globals["__libc_dlopen_mode"], args)
+				libdl_handle = self.call(self.priv_globals["__libc_dlopen_mode"], args)
 
-				self.globals["dlopen"] = self.get_symbol_value("dlopen")
-				self.globals["dlsym"] = self.get_symbol_value("dlsym")
-				if libc_path is None:
-					libc_path = "libc.so.6\x00"
-				elif libc_path.endswith("\x00") == False:
-					libc_path += "\x00"
-				args = [libc_path, 1] #LAZY
-				self.globals["libc_handle"] = self.call(self.globals["dlopen"], args)
-				#print "libc:", hex(self.globals["libc_handle"])
+				self.priv_globals["dlopen"] = self.get_symbol_value("dlopen")
+				self.priv_globals["dlsym"] = self.get_symbol_value("dlsym")
 
-			args = [self.globals["libc_handle"], got_name + "\x00"]
-			real_addr = self.call(self.globals["dlsym"], args)
+				self.priv_globals["lib_handle"] = {}
+			
+			if lib_path is None:
+				lib_path = "libc.so.6\x00"
+			elif lib_path.endswith("\x00") == False:
+				lib_path += "\x00"
+
+			if lib_path not in self.priv_globals["lib_handle"].keys():
+				args = [lib_path, 1] #LAZY
+				self.priv_globals["lib_handle"][lib_path] = self.call(self.priv_globals["dlopen"], args)
+				#print "libc:", hex(self.priv_globals["lib_handle"])
+
+			args = [self.priv_globals["lib_handle"][lib_path], got_name]
+			real_addr = self.call(self.priv_globals["dlsym"], args)
 		else:
 			real_addr = self.get_symbol_value(got_name)
-
-		#print got_name, ":", hex(real_addr)
+		if real_addr == 0:
+			print "[!]", got_name, ":", hex(real_addr)
 		if "64" in self.arch:
 			self.write_long(got_addr, real_addr)
 		else:
 			self.write_int(got_addr, real_addr)
 
-	def fix_gots(self, got_list):
+	def fix_gots(self, got_list, lib_path = None):
 		for items in got_list:
+			if lib_path is not None:
+				if len(items) == 2:
+					items = items + [True, lib_path]
+				elif len(items) == 3:
+					if type(items[2]) == str:
+						items = items[:-1] + [True, items[-1]]
+					else:
+						items = items + [lib_path]
 			self.fix_got(*items)
+
+	def patch_asm(self, addr, asm_info):
+		data = self._asm_(asm_info, addr)
+		self.write_mem(addr, data)
+
+	def patch_config(self, patch_config):
+		"""
+		patch_config:
+		{
+			offset: data,
+			offset: [data],
+			offset: ["asm", data_asm],
+			offset: ["data", data],
+		}
+		"""
+		for addr in patch_config:
+			#print addr
+			value = patch_config[addr]
+			data = ""
+			if type(value) == str:
+				data = value
+				
+			else:
+				if len(value) == 1:
+					data = value[0]
+				elif value[0] == "data":
+					data = value[1]
+				elif value[0] == "asm":
+					data = self._asm_(value[1], addr)
+			self.write_mem(addr, data)
 
 	def run_cmd(self, cmd_line):
 		import commands
