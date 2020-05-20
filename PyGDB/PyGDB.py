@@ -523,12 +523,18 @@ class PyGDB():
 		return self.code_base
 
 	def codebase(self):
+		if self.code_base is not None:
+			return self.code_base
 		return self.codeaddr()[0]
 
 	def heap(self):
+		if self.heap_base is not None:
+			return self.heap_base
 		return self.getheapbase()
 
 	def libc(self):
+		if self.libc_base is not None:
+			return self.libc_base
 		return self.libcbase()
 
 	def attach_name(self, binary_name, idx = 0):
