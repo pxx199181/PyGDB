@@ -809,16 +809,33 @@ class PyGDB():
 			size = value[1]
 			self.write_mem(addr, data[offset:offset+size])
 
-	def call(self, func_addr, args, use_addr = None):
+		def call(self, func_addr, args, use_addr = None):
 		"""
 		args = [arg0, arg1, arg2, ...]
 		"""
 		if io_wrapper == "zio":
 			print("please install pwntools")
 			return 
-
 		pc = self.get_reg("pc")
 		sp = self.get_reg("sp")
+
+		args_new = []
+		need_set_data = ""
+		cur_arg_ptr = sp
+		for item in args:
+			if type(item) == str:
+				args_new.append(cur_arg_ptr)
+				need_set_data += self.read_mem(cur_arg_ptr, len(item))
+				self.write_mem(cur_arg_ptr, item)
+				cur_arg_ptr += len(item)
+				need_set = True
+			else:
+				args_new.append(item)
+		if len(need_set_data) != 0:
+			ret_v = self.call(func_addr, args_new, use_addr)
+			self.write_mem(sp, need_set_data)
+			return ret_v
+
 		old_data = ""
 		if use_addr is None:
 			use_addr = pc
@@ -826,9 +843,24 @@ class PyGDB():
 		else:
 			self.set_reg("pc", use_addr)
 
-		asm_info = ""
-		asm_info += "call 0x%x\n"%func_addr
-		asm_info += "nop"
+
+		if self.arch.lower() in ["arm", "arch64"]:
+			call_reg = "r%d"%len(args)
+			self.set_reg(call_reg, func_addr)
+			asm_info = ""
+			asm_info += "bl %s\n"%call_reg
+			asm_info += "mov r0, r0"
+		else:
+			if "64" in self.arch:
+				call_reg = "rax"
+			else:
+				call_reg = "eax"
+
+			self.set_reg(call_reg, func_addr)
+			asm_info = ""
+			asm_info += "call %s\n"%call_reg
+			asm_info += "nop"
+		
 
 		data = asm(asm_info ,vma = use_addr, arch = self.arch, os = "linux")
 		#print data
@@ -857,13 +889,13 @@ class PyGDB():
 
 				if len(args) > 6:
 					for i in range(len(args)-6):
-						self.write(sp - i*8, args[i+6])
+						self.write_mem(sp - i*8, args[i+6])
 
 					self.set_reg("sp", sp-(len(args)-6)*8)
 			else:
 				for i  in range(len(args)):
 					for i in range(len(args)):
-						self.write(sp - i*4, args[i])
+						self.write_mem(sp - i*4, args[i])
 
 					self.set_reg("sp", sp-len(args)*4)
 
@@ -892,6 +924,53 @@ class PyGDB():
 				ret_v = self.get_reg("eax")
 
 		return ret_v
+
+
+	def get_symbol_value(self, name):
+		data = self.do_gdb_ret("print %s"%name)
+		pos_b = data.find(" 0x")
+		if pos_b == -1:
+			return 0
+		value = data[pos_b+1:].split()[0]
+		real_addr = int(value, 16)
+		return real_addr
+
+	def fix_got(self, got_name, got_addr,  dlsym = True, libc_path = None):
+
+		if got_name.endswith("\x00") == False:
+			got_name += "\x00"
+
+		if dlsym == True:
+			if "libc_handle" not in self.globals.keys():
+				self.globals["__libc_dlopen_mode"] = self.get_symbol_value("__libc_dlopen_mode")
+				self.globals["__libc_dlsym"] = self.get_symbol_value("__libc_dlsym")
+				args = ["libdl.so.2\x00", 0x80000001]
+				libdl_handle = self.call(self.globals["__libc_dlopen_mode"], args)
+
+				self.globals["dlopen"] = self.get_symbol_value("dlopen")
+				self.globals["dlsym"] = self.get_symbol_value("dlsym")
+				if libc_path is None:
+					libc_path = "libc.so.6\x00"
+				elif libc_path.endswith("\x00") == False:
+					libc_path += "\x00"
+				args = [libc_path, 1] #LAZY
+				self.globals["libc_handle"] = self.call(self.globals["dlopen"], args)
+				#print "libc:", hex(self.globals["libc_handle"])
+
+			args = [self.globals["libc_handle"], got_name + "\x00"]
+			real_addr = self.call(self.globals["dlsym"], args)
+		else:
+			real_addr = self.get_symbol_value(got_name)
+
+		#print got_name, ":", hex(real_addr)
+		if "64" in self.arch:
+			self.write_long(got_addr, real_addr)
+		else:
+			self.write_int(got_addr, real_addr)
+
+	def fix_gots(self, got_list):
+		for items in got_list:
+			self.fix_got(*items)
 
 	def run_cmd(self, cmd_line):
 		import commands
