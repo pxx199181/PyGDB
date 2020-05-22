@@ -108,10 +108,10 @@ def PyGDB_unhexdump(data, width = 16):
 	return final_data
 
 class PyGDB():
-	def __init__(self, target_path = None, arch = None):
-		self.load_init(target_path, arch)
+	def __init__(self, target = None, arch = None):
+		self.load_init(target, arch)
 
-	def load_init(self, target_path = None, arch = None):
+	def load_init(self, target = None, arch = None):
 		PYGDBFILE = os.path.abspath(os.path.expanduser(__file__))
 		#print("PYGDBFILE:", PYGDBFILE)
 		while os.path.islink(PYGDBFILE):
@@ -119,9 +119,9 @@ class PyGDB():
 		peda_dir = os.path.join(os.path.dirname(PYGDBFILE), "peda-arm")
 		#print("peda_dir:", peda_dir)
 
-		if target_path is not None:
-			while os.path.islink(target_path):
-				target_path = os.path.abspath(os.path.join(os.path.dirname(target_path), os.path.expanduser(os.readlink(target_path))))
+		if target is not None:
+			while os.path.islink(target):
+				target = os.path.abspath(os.path.join(os.path.dirname(target), os.path.expanduser(os.readlink(target))))
 		
 		self.globals = {}
 		self.priv_globals = {}
@@ -143,8 +143,8 @@ class PyGDB():
 			exit(0)
 
 		self.bin_path = None
-		if target_path is not None:
-			self.bin_path = target_path
+		if target is not None:
+			self.bin_path = target
 
 			if (self.arch == None):
 				self.arch = self.getarch()
@@ -634,7 +634,7 @@ class PyGDB():
 				addr += self.get_codebase()
 		return addr
 
-	def hook(self, addr, handler, args, is_pie = False):
+	def hook(self, addr, handler, args = [], is_pie = False):
 		addr = self.real_addr(addr, is_pie)
 
 		if addr in self.hook_map.keys():
@@ -816,32 +816,38 @@ class PyGDB():
 			size = value[1]
 			self.write_mem(addr, data[offset:offset+size])
 
-	def call(self, func_addr, args, use_addr = None):
+	def call(self, func, args, lib_path = "libc.so.6", use_addr = None):
 		"""
 		args = [arg0, arg1, arg2, ...]
 		"""
 		if io_wrapper == "zio":
 			print("please install pwntools")
 			return 
+
+		if type(func) == str:
+			func_addr = self.get_lib_symbol(func, lib_path)
+		else:
+			func_addr = func
+
 		pc = self.get_reg("pc")
-		sp = self.get_reg("sp")
+		origin_sp = sp = self.get_reg("sp")
 
 		args_new = []
-		need_set_data = ""
-		cur_arg_ptr = sp
 		for item in args:
 			if type(item) == str:
-				args_new.append(cur_arg_ptr)
-				need_set_data += self.read_mem(cur_arg_ptr, len(item))
-				self.write_mem(cur_arg_ptr, item)
-				cur_arg_ptr += len(item)
-				need_set = True
+				sp -= len(item)
+				args_new.append(sp)
+				self.write_mem(sp, item)
 			else:
 				args_new.append(item)
-		if len(need_set_data) != 0:
-			ret_v = self.call(func_addr, args_new, use_addr)
-			self.write_mem(sp, need_set_data)
-			return ret_v
+
+		if "64" in self.arch:
+			sp -= sp%8
+		else:
+			sp -= sp%4
+
+		self.set_reg("sp", sp)
+		args = args_new
 
 		old_data = ""
 		if use_addr is None:
@@ -917,7 +923,7 @@ class PyGDB():
 
 		#self.del_bp(bp_num)
 		self.set_reg("pc", pc)
-		self.set_reg("sp", sp)
+		self.set_reg("sp", origin_sp)
 		if old_data != "":
 			self.write_mem(pc, old_data)
 
@@ -941,35 +947,29 @@ class PyGDB():
 		real_addr = int(value, 16)
 		return real_addr
 
-	def fix_got(self, got_name, got_addr,  dlsym = True, lib_path = None):
-
-		if got_name.endswith("\x00") == False:
-			got_name += "\x00"
-
-		if dlsym == True:
-			if "dlopen" not in self.priv_globals.keys():
-				self.priv_globals["__libc_dlopen_mode"] = self.get_symbol_value("__libc_dlopen_mode")
-				self.priv_globals["__libc_dlsym"] = self.get_symbol_value("__libc_dlsym")
-				args = ["libdl.so.2\x00", 0x80000001]
-				libdl_handle = self.call(self.priv_globals["__libc_dlopen_mode"], args)
-
-				self.priv_globals["dlopen"] = self.get_symbol_value("dlopen")
-				self.priv_globals["dlsym"] = self.get_symbol_value("dlsym")
-
-				self.priv_globals["lib_handle"] = {}
+	def get_lib_symbol(self, name, lib_path = "libc.so.6"):
+		if "dlopen" not in self.priv_globals.keys():
+			self.priv_globals["__libc_dlopen_mode"] = self.get_symbol_value("__libc_dlopen_mode")
+			self.priv_globals["__libc_dlsym"] = self.get_symbol_value("__libc_dlsym")
 			
-			if lib_path is None:
-				lib_path = "libc.so.6\x00"
-			elif lib_path.endswith("\x00") == False:
-				lib_path += "\x00"
+			libdl = "libdl.so.2"
+			args = [libdl + "\x00", 0x80000001]
+			libdl_handle = self.call(self.priv_globals["__libc_dlopen_mode"], args)
+			self.priv_globals["dlopen"] = self.get_symbol_value("dlopen")
+			self.priv_globals["dlsym"] = self.get_symbol_value("dlsym")
+			self.priv_globals["lib_handle"] = {}
 
-			if lib_path not in self.priv_globals["lib_handle"].keys():
-				args = [lib_path, 1] #LAZY
-				self.priv_globals["lib_handle"][lib_path] = self.call(self.priv_globals["dlopen"], args)
-				#print "libc:", hex(self.priv_globals["lib_handle"])
+		if lib_path not in self.priv_globals["lib_handle"].keys():
+			args = [lib_path + "\x00", 1] #LAZY
+			self.priv_globals["lib_handle"][lib_path] = self.call(self.priv_globals["dlopen"], args)
+			#print "libc:", hex(self.priv_globals["lib_handle"])
+		args = [self.priv_globals["lib_handle"][lib_path], name + "\x00"]
+		real_addr = self.call(self.priv_globals["dlsym"], args)
+		return real_addr
 
-			args = [self.priv_globals["lib_handle"][lib_path], got_name]
-			real_addr = self.call(self.priv_globals["dlsym"], args)
+	def fix_got(self, got_name, got_addr,  dlsym = True, lib_path = "libc.so.6"):
+		if dlsym == True:
+			real_addr = self.get_lib_symbol(got_name, lib_path)
 		else:
 			real_addr = self.get_symbol_value(got_name)
 		if real_addr == 0:
@@ -990,6 +990,158 @@ class PyGDB():
 					else:
 						items = items + [lib_path]
 			self.fix_got(*items)
+
+	def save_context(self):
+		self.priv_globals["regs"] = self.get_regs()
+
+	def restore_context(self):
+		#print self.globals["regs"]
+		if "regs" not in self.priv_globals.keys():
+			return
+		regs = self.priv_globals["regs"]
+		for reg_name in regs.keys():
+			self.set_reg(reg_name, regs[reg_name])
+
+	def run_in_new_terminal(self, command, terminal = None, args = None, sleep_time = 2):
+		"""run_in_new_terminal(command, terminal = None) -> None
+
+		Run a command in a new terminal.
+
+		When ``terminal`` is not set:
+			- If ``context.terminal`` is set it will be used.
+			  If it is an iterable then ``context.terminal[1:]`` are default arguments.
+			- If a ``pwntools-terminal`` command exists in ``$PATH``, it is used
+			- If ``$TERM_PROGRAM`` is set, that is used.
+			- If X11 is detected (by the presence of the ``$DISPLAY`` environment
+			  variable), ``x-terminal-emulator`` is used.
+			- If tmux is detected (by the presence of the ``$TMUX`` environment
+			  variable), a new pane will be opened.
+			- If GNU Screen is detected (by the presence of the ``$STY`` environment
+			  variable), a new screen will be opened.
+
+		Arguments:
+			command (str): The command to run.
+			terminal (str): Which terminal to use.
+			args (list): Arguments to pass to the terminal
+
+		Note:
+			The command is opened with ``/dev/null`` for stdin, stdout, stderr.
+
+		Returns:
+		  PID of the new terminal process
+		"""
+
+		if not terminal:
+			if 'TERM_PROGRAM' in os.environ:
+				terminal = os.environ['TERM_PROGRAM']
+				args	 = []
+			elif 'DISPLAY' in os.environ and which('x-terminal-emulator'):
+				terminal = 'x-terminal-emulator'
+				args	 = ['-e']
+			elif 'TMUX' in os.environ and which('tmux'):
+				terminal = 'tmux'
+				args	 = ['splitw']
+			elif 'STY' in os.environ and which('screen'):
+				terminal = 'screen'
+				args	 = ['-t','pwntools-gdb','bash','-c']
+
+		if isinstance(args, tuple):
+			args = list(args)
+
+		argv = [which(terminal)] + args
+
+		if isinstance(command, str):
+			if ';' in command:
+				log.error("Cannot use commands with semicolon.  Create a script and invoke that directly.")
+			argv += [command]
+		elif isinstance(command, (list, tuple)):
+			if any(';' in c for c in command):
+				log.error("Cannot use commands with semicolon.  Create a script and invoke that directly.")
+			argv += list(command)
+
+		#log.debug("Launching a new terminal: %r" % argv)
+
+		pid = os.fork()
+
+		if pid == 0:
+			# Closing the file descriptors makes everything fail under tmux on OSX.
+			if platform.system() != 'Darwin':
+				devnull = open(os.devnull, 'rwb')
+				os.dup2(devnull.fileno(), 0)
+				os.dup2(devnull.fileno(), 1)
+				os.dup2(devnull.fileno(), 2)
+			sleep(sleep_time)
+			os.execv(argv[0], argv)
+			os._exit(1)
+
+		return pid
+
+	def dup_io(self, port = 9999, ip = "0.0.0.0", new_terminal = True):
+		self.save_context()
+		"""
+		struct sockaddr_in {
+			 unsigned short		 sin_family;	
+			 unsigned short int	 sin_port;	  
+			 struct in_addr		 sin_addr;	  
+			 unsigned char		  sin_zero[8];   
+		};
+		struct in_addr {
+			unsigned long	 s_addr;
+		};
+		Lewis.sin_family	  = AF_INET;
+		Lewis.sin_port		= htons(port);
+		Lewis.sin_addr.s_addr = inet_addr(ip);
+		memset(Lewis.sin_zero,0,sizeof(Lewis.sin_zero));
+		"""
+		def parse_ip(ip):
+			data = ""
+			for item in ip.split("."):
+				data += p8(int(item))
+			return data
+
+		sockaddr_in = ""
+		sockaddr_in += p16(2)
+		sockaddr_in += p16(port, endian = 'big')
+		sockaddr_in += parse_ip(ip)
+		sockaddr_in += p64(0)
+
+		#self.hexdump(data = sockaddr_in)
+		#fd_tcp = socket(AF_INET, SOCK_STREAM, 0)
+		server = self.call("socket", [2, 1, 0])
+		#print "server", server
+
+		# setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &flag, len) 
+		SOL_SOCKET = 1
+		SO_REUSEADDR = 2
+		if self.call("setsockopt", [server, SOL_SOCKET, SO_REUSEADDR, p32(1), 4]) == -1:
+			print "setsockopt error"
+			return  
+		#bind(server,(struct sockaddr *)&serv_addr,0x10)
+		if (self.call("bind", [server, sockaddr_in, 0x10]) != 0):
+			print "bind error"
+			return 
+		#print "bind", server
+		#listen(server,0)
+		self.call("listen", [server, 0])
+		#print "listen", server
+
+		if new_terminal:
+			self.run_in_new_terminal("nc %s %d"%(ip, port), sleep_time = 0.5)
+		else:
+			print "wait io @ %s:%d"%(ip, port)
+		
+		#client=accept(server,0,0)
+		client = self.call("accept", [server, 0, 0])
+		#print "accept", client
+
+		#dup2(client,0)
+		#dup2(client,1)
+		#dup2(client,2)
+		self.call("dup2", [client, 0])
+		self.call("dup2", [client, 1])
+		self.call("dup2", [client, 2])
+
+		self.restore_context()
 
 	def patch_asm(self, addr, asm_info):
 		data = self._asm_(asm_info, addr)
@@ -1250,6 +1402,6 @@ int main() {
 			"""
 		res = self.compile_cfile(source, gcc_path, option, obj_name + ".c", obj_name)
 		print "gen objfile @ %s"%obj_name
-		self.load_init(target_path = obj_name)
+		self.load_init(target = obj_name)
 
 

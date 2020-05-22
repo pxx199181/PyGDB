@@ -1,7 +1,7 @@
 from PyGDB import PyGDB
 
 def test_intel():
-	pygdb = PyGDB(target_path = "./test_x86")
+	pygdb = PyGDB(target = "./test_x86")
 	print(pygdb.set_bp(0x804861C))
 	pygdb.start()
 	print(pygdb.get_code(20))
@@ -33,7 +33,7 @@ def test_intel():
 
 
 def test_arm():
-	pygdb = PyGDB(target_path = "./test_arm")
+	pygdb = PyGDB(target = "./test_arm")
 	pygdb.attach("127.0.0.1:4444")
 	print(pygdb.set_bp(0x10474)) #jmp start_main
 	print(pygdb.get_bp())
@@ -97,7 +97,7 @@ def test_hook():
 		else:
 			pass
 
-	pygdb = PyGDB(target_path = "./test_hook")
+	pygdb = PyGDB(target = "./test_hook")
 	pygdb.hook(0x40054d, hook_test, [pygdb, 0, 0x40054d, "call printf",])
 	pygdb.hook(0x400552, hook_out, [pygdb, 0, 0x400552, "cmp",])
 
@@ -114,7 +114,7 @@ def test_hook():
 
 from pwn import *
 def test_mmap():
-	pygdb = PyGDB(target_path = "./test_hook")
+	pygdb = PyGDB(target = "./test_hook")
 	#pygdb.
 	bp_id, bp_addr = pygdb.set_bp("main")
 	#pygdb.interact()
@@ -225,7 +225,7 @@ def test_mmap():
 
 def test_patch():
 	
-	#pygdb = PyGDB(target_path = "./test_hook")
+	#pygdb = PyGDB(target = "./test_hook")
 	pygdb = PyGDB(arch = "amd64")
 	pygdb.writefile("test_patch", "SADKNJASNDKNSADNKJSANDSADKNJASNDKNSADNKJSANDSADKNJASNDKNSADNKJSAND")
 
@@ -255,12 +255,34 @@ def test_patch():
 
 	pygdb.interact()
 
+	
+def test_dup_io():
+	def hook(pygdb):
+		data = pygdb.get_regs()
+		print data
+		data = pygdb.get_code(count = 10)
+		print data
+		data = pygdb.get_stack(count = 20)
+		print data
+
+	pygdb = PyGDB(target = "./test_dup_io")
+	b_id, _ = pygdb.set_bp("main")
+	pygdb.run()
+	pygdb.del_bp(b_id)
+
+	pygdb.dup_io(port = 12345, new_terminal = True)
+	#pygdb.dup_io(port = 12345, new_terminal = False)
+	pygdb.hook(0x400883, hook, [pygdb])
+	pygdb.Continue()
+	#pygdb.detach()
+	pygdb.interact()
+
 
 import sys
 if __name__ == "__main__":
 	if len(sys.argv) < 2:
 		print "useage:"
-		print "\t python test_pygdb.py intel/arm/hook/mmap/patch"
+		print "\t python test_pygdb.py intel/arm/hook/mmap/patch/dup_io"
 	else:
 		if sys.argv[1] == "intel":
 			test_intel()
@@ -273,3 +295,5 @@ if __name__ == "__main__":
 			test_mmap()
 		elif sys.argv[1] == "patch":
 			test_patch()
+		elif sys.argv[1] == "dup_io":
+			test_dup_io()
