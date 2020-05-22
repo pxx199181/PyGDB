@@ -37,13 +37,15 @@ def main():
 
     binary_path = "./binary"
     pygdb = PyGDB(target = binary_path)
-    pygdb.attach_name(binary_path, 0)
+    #pygdb.attach_name(binary_path, 0)
     #pygdb.hook(0x8049318, hook_test, [pygdb, 0, 0x8049318, "call printf",])
     #pygdb.Continue()
+    b_id, _ = pygdb.set_bp(0x8049318)
+    pygdb.run()
+    pygdb.del_bp(b_id)
 
-    pygdb.set_bp(0x8049318)
     pygdb.Continue()
-
+    
     pygdb.interact()
 
 if __name__ == "__main__":
