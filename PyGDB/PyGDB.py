@@ -251,10 +251,15 @@ class PyGDB():
 
 		begin_s = "pyCmd-B{"
 		end_s = "}pyCmd-E"
-		self.io.recvuntil(begin_s)
+		#self.io.recvuntil(begin_s)
 		#data = self.io.recvuntil("}pyCmd-E", drop = True)
-		data = self.io.recvuntil(end_s)
-		data = data[:-len(end_s)]
+		while True:
+			data = self.io.recvuntil(end_s)
+			pos = data.rfind(begin_s)
+			if pos != -1:
+				#print "data:", data
+				data = data[pos + len(begin_s):-len(end_s)]
+				break
 		data = data.decode("hex")
 		if data == '':
 			return ''
