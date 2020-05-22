@@ -892,7 +892,7 @@ class PyGDB():
 
 		repair_stack_offset = 0
 
-
+		#print [hex(c) for c in args]
 		if self.arch.lower() in ["arm", "arch64"]:
 			for i in range(len(args)):
 				self.set_reg("r%d"%i, args[i])
@@ -907,16 +907,18 @@ class PyGDB():
 
 				if len(args) > 6:
 					for i in range(len(args)-6):
-						self.write_mem(sp - i*8, args[i+6])
+						sp -= 8
+						self.write_mem(sp, p64(args[-1-i]))
 
-					self.set_reg("sp", sp-(len(args)-6)*8)
+					self.set_reg("sp", sp)
 			else:
 				for i  in range(len(args)):
-					for i in range(len(args)):
-						self.write_mem(sp - i*4, args[i])
+					sp -= 4
+					self.write_mem(sp, p32(args[-1-i]))
 
-					self.set_reg("sp", sp-len(args)*4)
+				self.set_reg("sp", sp)
 
+		#self.interact()
 		if len(self.hook_map.keys()) != 0:
 			self.run_until(next_addr)
 		else:
