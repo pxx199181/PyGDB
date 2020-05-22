@@ -952,6 +952,8 @@ class PyGDB():
 			return 0
 		value = data[pos_b+1:].split()[0]
 		real_addr = int(value, 16)
+		if real_addr == 0:
+			print "[!]", name, ":", hex(real_addr)
 		return real_addr
 
 	def get_lib_symbol(self, name, lib_path = "libc.so.6"):
@@ -972,6 +974,8 @@ class PyGDB():
 			#print "libc:", hex(self.priv_globals["lib_handle"])
 		args = [self.priv_globals["lib_handle"][lib_path], name + "\x00"]
 		real_addr = self.call(self.priv_globals["dlsym"], args)
+		if real_addr == 0:
+			print "[!]", name, ":", hex(real_addr)
 		return real_addr
 
 	def fix_got(self, got_name, got_addr,  dlsym = True, lib_path = "libc.so.6"):
@@ -979,8 +983,8 @@ class PyGDB():
 			real_addr = self.get_lib_symbol(got_name, lib_path)
 		else:
 			real_addr = self.get_symbol_value(got_name)
-		if real_addr == 0:
-			print "[!]", got_name, ":", hex(real_addr)
+		#if real_addr == 0:
+		#	print "[!]", got_name, ":", hex(real_addr)
 		if "64" in self.arch:
 			self.write_long(got_addr, real_addr)
 		else:
