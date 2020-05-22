@@ -821,7 +821,7 @@ class PyGDB():
 			size = value[1]
 			self.write_mem(addr, data[offset:offset+size])
 
-	def call(self, func, args, lib_path = "libc.so.6", use_addr = None):
+	def call(self, func, args = [], lib_path = "libc.so.6", use_addr = None):
 		"""
 		args = [arg0, arg1, arg2, ...]
 		"""
@@ -830,7 +830,11 @@ class PyGDB():
 			return 
 
 		if type(func) == str:
-			func_addr = self.get_lib_symbol(func, lib_path)
+			if lib_path is not None:
+				func_addr = self.get_lib_symbol(func, lib_path)
+			else:
+				func_addr = self.get_symbol_value(func)
+			#func_addr = self.get_lib_symbol(func, lib_path)
 		else:
 			func_addr = func
 
