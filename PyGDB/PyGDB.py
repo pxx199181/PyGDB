@@ -1420,3 +1420,33 @@ int main() {
 		self.load_init(target = obj_name)
 
 
+	def get_lib_base(libname):
+		data = re.search(".*" + libname, pygdb.procmap())
+		if data :
+			print "data:", repr(data.group())
+			libaddr = data.group().split("-")[0]
+			return int(libaddr, 16)
+		else :
+			return 0
+
+	def get_thread_id(self):
+		thread_num = 0
+		addr_v = None
+
+		ret_v = self.do_pygdb_ret("thread")
+		#print ret_v
+		b_num = self.cut_str(ret_v, "thread is ", " (")
+		if b_num :
+			b_num = b_num.group().split()[1]
+			thread_num = int(b_num)
+
+			addr_v = self.cut_str(ret_v, "(Thread ", " (")
+			if addr_v is not None:
+				addr_v = int(addr_v, 16)
+		return thread_num, addr_v
+
+	def call_s(self, func, args = [], lib_path = "libc.so.6", use_addr = None):
+		self.save_context()
+		self.call(func, args, lib_path, use_addr)
+		self.restore_context()
+
