@@ -1500,13 +1500,13 @@ int main() {
 	def gdb_interact(self, break_list = [], gdbscript = "", init_file = ".self.init", terminal = None, sudo = True):
 		pc = self.get_reg("pc")
 		halt_code = self._asm_("jmp 0x%x"%pc, pc)
-		restore_value = self.read_int(pc)
+		restore_value = self.read_long(pc)
 		self.write_mem(pc, halt_code)
 		target = self.get_target()
 
 		init_script = ""
 		init_script += target + "\n"
-		init_script += "set *(unsigned int *)0x%x=0x%x\n"%(pc, restore_value)
+		init_script += "set *(unsigned long long *)0x%x=0x%x\n"%(pc, restore_value)
 		init_script += "context\n"
 		init_script += "\n".join(["b *0x%x"%c for c in break_list]) + "\n"
 		init_script += gdbscript.strip()
