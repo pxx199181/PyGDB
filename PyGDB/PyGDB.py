@@ -135,6 +135,8 @@ class PyGDB():
 		self.code_base = None
 		self.libc_base = None
 		self.heap_base = None
+		
+		self.target_argv = ""
 
 		#self.gdb_path = misc.which('gdb-multiarch') or misc.which('gdb')
 		self.gdb_path = which('gdb-multiarch') or which('gdb')
@@ -232,19 +234,23 @@ class PyGDB():
 		self.is_local = False
 		if type(target) == str:
 			self.do_gdb_ret("target remote %s"%target)
+			self.target_argv = "target remote %s"%target
 		else:
 			print("attach %d"%target)
 			print(self.do_gdb_ret("attach %d"%target))
+			self.target_argv = "attach %d"%target
 
 	def start(self):
 		self.is_local = True
 		result = self.do_gdb_ret("start")
 		self.dbg_pid = self.get_dbg_pid()
+		self.target_argv = "attach %d"%self.dbg_pid
 
 	def run(self):
 		self.is_local = True
 		result = self.do_gdb_ret("run")
 		self.dbg_pid = self.get_dbg_pid()
+		self.target_argv = "attach %d"%self.dbg_pid
 			 
 	def do_pygdb_ret(self, cmdline):
 		self.io.sendline("pyCmdRet %s"%cmdline)
@@ -1420,10 +1426,10 @@ int main() {
 		self.load_init(target = obj_name)
 
 
-	def get_lib_base(libname):
-		data = re.search(".*" + libname, pygdb.procmap())
+	def get_lib_base(self, libname):
+		data = re.search(".*" + libname, self.procmap())
 		if data :
-			print "data:", repr(data.group())
+			#print "data:", repr(data.group())
 			libaddr = data.group().split("-")[0]
 			return int(libaddr, 16)
 		else :
@@ -1450,3 +1456,63 @@ int main() {
 		self.call(func, args, lib_path, use_addr)
 		self.restore_context()
 
+	def get_target(self):
+		return self.target_argv
+
+	def wait_interact(self):
+		import signal
+
+		print "<wait for interact> (/continue/exit/quit/c/e/q/ctrl+c)"
+		exit_sign = True
+		while True:
+			try:
+				data = raw_input()
+				if data.strip().lower() in ["exit", "quit", "e", "q"]:
+					exit_sign = True
+					break
+				elif data.strip().lower() in ["continue", "con", "cont", "c"]: 
+					exit_sign = False
+					break
+			except EOFError:
+				print('[+] ' + 'Got EOF while reading in interact')
+				break
+			except KeyboardInterrupt:
+				print('[+] ' + 'Got EOF while reading in interact')
+				break
+		
+		if exit_sign:
+			if self.is_local:
+				print("[+] kill process")
+				os.kill(self.dbg_pid, signal.SIGKILL)
+		else:
+			target = self.get_target()
+			print "target:", target
+			self.interact()
+			self.do_gdb(target)			
+
+	def gdb_interact(self, break_list = [], gdbscript = "", init_file = ".self.init", terminal = None, sudo = True):
+		pc = self.get_reg("pc")
+		halt_code = self._asm_("jmp 0x%x"%pc, pc)
+		restore_value = self.read_int(pc)
+		self.write_mem(pc, halt_code)
+		target = self.get_target()
+
+		init_script = ""
+		init_script += target + "\n"
+		init_script += "set *(unsigned int *)0x%x=0x%x\n"%(pc, restore_value)
+		init_script += "context\n"
+		init_script += "\n".join(c for c in break_list) + "\n"
+		init_script += gdbscript.strip()
+		self.writefile(init_file, init_script)
+
+		#self.do_gdb("del")
+		self.detach()
+		#self.do_gdb("q")
+
+		cmdline = ""
+		if sudo == True:
+			cmdline += "sudo "
+		cmdline += "%s -x %s"%(self.gdb_path, init_file)
+		self.run_in_new_terminal(cmdline, terminal = terminal)
+		self.wait_interact()
+		return
