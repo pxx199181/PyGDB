@@ -135,7 +135,7 @@ class PyGDB():
 		self.code_base = None
 		self.libc_base = None
 		self.heap_base = None
-		
+
 		self.target_argv = ""
 
 		#self.gdb_path = misc.which('gdb-multiarch') or misc.which('gdb')
@@ -654,6 +654,13 @@ class PyGDB():
 		num, addr_v = self.set_bp(addr)
 		self.hook_map[addr_v] = [num, handler, args, addr]
 		return 
+	
+	def resore_hook(self):
+		for addr in self.hook_map.keys():
+			[num, handler, args, addr] = self.hook_map[addr_v]
+			num, addr_v = self.set_bp(addr)
+			self.hook_map[addr_v] = [num, handler, args, addr]
+			return 
 
 	def clear_hook(self):
 		for addr in self.hook_map.keys():
@@ -1486,9 +1493,9 @@ int main() {
 				os.kill(self.dbg_pid, signal.SIGKILL)
 		else:
 			target = self.get_target()
-			print "target:", target
-			self.interact()
-			self.do_gdb(target)			
+			#print "target:", target
+			#self.interact()
+			self.do_gdb_ret(target)			
 
 	def gdb_interact(self, break_list = [], gdbscript = "", init_file = ".self.init", terminal = None, sudo = True):
 		pc = self.get_reg("pc")
@@ -1505,9 +1512,7 @@ int main() {
 		init_script += gdbscript.strip()
 		self.writefile(init_file, init_script)
 
-		#self.do_gdb("del")
 		self.detach()
-		#self.do_gdb("q")
 
 		cmdline = ""
 		if sudo == True:
@@ -1516,3 +1521,16 @@ int main() {
 		self.run_in_new_terminal(cmdline, terminal = terminal)
 		self.wait_interact()
 		return
+
+	def setbuf0(self):
+
+		stdin = self.get_symbol_value("stdin")
+		stdout = self.get_symbol_value("stdout")
+		stderr = self.get_symbol_value("stderr")
+
+		#setvbuf = pygdb.get_symbol_value("setvbuf")
+		#pygdb.set_bp(setvbuf)
+		#print "stdin:", hex(stdin)
+		self.call_s("setvbuf", [stdin, 0, 2, 0])
+		self.call_s("setvbuf", [stdout, 0, 2, 0])
+		self.call_s("setvbuf", [stderr, 0, 2, 0])
