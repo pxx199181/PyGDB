@@ -1508,7 +1508,7 @@ int main() {
 		init_script += target + "\n"
 		init_script += "set *(unsigned int *)0x%x=0x%x\n"%(pc, restore_value)
 		init_script += "context\n"
-		init_script += "\n".join(c for c in break_list) + "\n"
+		init_script += "\n".join(["b *0x%x"%c for c in break_list]) + "\n"
 		init_script += gdbscript.strip()
 		self.writefile(init_file, init_script)
 
