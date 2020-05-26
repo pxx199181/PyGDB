@@ -34,10 +34,10 @@ Template for quick scripting.
 from PyGDB import PyGDB
 
 def test():
-    target_path = "/bin/ls"
-    pygdb = PyGDB(target_path)
+    target = "/bin/ls"
+    pygdb = PyGDB(target)
 
-    #pygdb.attach_name(target_path, 0)
+    #pygdb.attach_name(target, 0)
     #pygdb.attach("ip:port")
     #pygdb.attach(pid)
     pygdb.start()
@@ -49,8 +49,8 @@ def test():
     print pygdb.get_mem(rsp, 0x20)
     print pygdb.hexdump(rsp, 0x20)
 
-    #pygdb = PyGDB(target_path = target_path)
-    #pygdb.attach_name(target_path, 0)
+    #pygdb = PyGDB(target = target)
+    #pygdb.attach_name(target, 0)
     #code_base = pygdb.codebase()
     #pygdb.set_bp(0x12B2 + code_base)
     #pygdb.Continue()
@@ -69,7 +69,7 @@ def main():
         print("value:", value)
 
     binary_path = "./binary"
-    pygdb = PyGDB(target_path = binary_path)
+    pygdb = PyGDB(target = binary_path)
     pygdb.attach_name(binary_path, 0)
     #pygdb.hook(0x8049318, hook_test, [pygdb, 0, 0x8049318, "call printf",])
     #pygdb.Continue()
@@ -448,3 +448,9 @@ TODO
 - (2). call(addr, args)
 - (3). save_context / restore_context (only regs)
 - (4). dup io to socket / or a new terminal
+
+## 2020/05/26 Version 1.0.0
+- (1). call_s safe call() -> save_context, call, restore_context 
+- (2). interact(prompt) -> modify 
+- (3). gdb_interact() -> interact with gdb in new terminal
+

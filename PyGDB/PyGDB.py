@@ -415,9 +415,15 @@ class PyGDB():
 		else:
 			self.detach()
 
-	def interact(self):
+	def interact(self, prompt = "~> "):
 		self.do_pygdb("set_interact_mode 1")
 		print('[+] ' + 'Switching to interactive mode')
+		self.io.sendline("source ~/.gdbinit")
+
+		prompt = term.text.bold_red(prompt)
+		self.io.sendline("set prompt %s" % (prompt))
+
+		self.io.recvuntil(prompt)
 		self.io.sendline("context")
 
 		if io_wrapper == "zio":
@@ -441,7 +447,6 @@ class PyGDB():
 					pass
 			print "over"
 
-		#t = context.Thread(target = recv_thread)
 		t = threading.Thread(target = recv_thread)
 		t.daemon = True
 		t.start()
@@ -449,26 +454,30 @@ class PyGDB():
 		import time
 		time.sleep(0.5)
 
-
 		is_running = True
-		prompt = ""#term.text.bold_red("gdb-peda $")
-
 		while is_running:
 			try:
 				while not go.isSet():
-					#if False:#term.term_mode:
-					#	data = term.readline.readline(prompt = prompt, float = True)
-					#else:
-					#	data = sys.stdin.read(1)
-
-					data = raw_input(" "*len("gdb-peda $"))
+					#data_all = raw_input(" "*len(prompt))
+					data_all = ""
+					while True:
+						data = sys.stdin.read(1)
+						if data == '\x7f':
+							sys.stdout.write("\r" + ' '*len(prompt + data_all))
+							data_all = data_all[:-1]
+							sys.stdout.write("\r" + prompt + data_all)
+						else:
+							data_all += data
+							sys.stdout.write(data)						
+						if data == '\n':
+							break
 					try:
-						self.io.send(data)
+						self.io.send(data_all)
 					except EOFError:
 						go.set()
 						print('[+] ' + 'Got EOF while sending in interactive')
 					
-					if data.strip() in ["q", "quit"]:
+					if data_all.strip() in ["q", "quit"]:
 						self.quit()
 						is_running = False
 						go.set()
