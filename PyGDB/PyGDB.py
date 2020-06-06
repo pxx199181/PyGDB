@@ -261,9 +261,12 @@ class PyGDB():
 	def attach(self, target):
 		self.is_local = False
 		if type(target) == str:
-			self.do_gdb("file")
-			self.do_gdb_ret("target remote %s"%target)
-			self.target_argv = "target remote %s"%target
+			if ":" in target:
+				self.do_gdb("file")
+				self.do_gdb_ret("target remote %s"%target)
+				self.target_argv = "target remote %s"%target
+			else:
+				self.attach_name(target, 0)
 		else:
 			self.do_gdb("file")
 			print("attach %d"%target)

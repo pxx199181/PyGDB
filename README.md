@@ -36,10 +36,6 @@ from PyGDB import PyGDB
 def test():
     target = "/bin/ls"
     pygdb = PyGDB(target)
-
-    #pygdb.attach_name(target, 0)
-    #pygdb.attach("ip:port")
-    #pygdb.attach(pid)
     pygdb.start()
 
     print pygdb.get_regs()
@@ -48,12 +44,6 @@ def test():
     rsp = pygdb.get_reg("rsp")
     print pygdb.get_mem(rsp, 0x20)
     print pygdb.hexdump(rsp, 0x20)
-
-    #pygdb = PyGDB(target = target)
-    #pygdb.attach_name(target, 0)
-    #code_base = pygdb.codebase()
-    #pygdb.set_bp(0x12B2 + code_base)
-    #pygdb.Continue()
 
     print pygdb.get_bp()
 
@@ -93,35 +83,17 @@ def main():
 
     binary_path = "note"
     pygdb = PyGDB(target = binary_path)
+    #pygdb.attach_name(target, 0)
+    #pygdb.attach("ip:port")
+    #pygdb.attach(pid)
     pygdb.attach_name(binary_path, 0)
-    #pygdb.hook(0x8049318, hook_test, [pygdb, 0, 0x8049318, "call printf",])
-    #pygdb.Continue()
-    #b_id, _ = pygdb.set_bp(0x1A99 + 0x555555554000)
-    #pygdb.run()
-    #pygdb.interrupt_process()
-    #pygdb.del_bp(b_id)
-    #pygdb.dup_io(9999)
-    #data = pygdb.do_gdb_ret("print &main_arena")
-    #print "data:", repr(data)
-    #pygdb.interact()
     pygdb.setHeapFilter("fastbin|tcache|unsortbin")
     data = pygdb.execute("print &main_arena")
     print "data:", repr(data)
-    pygdb.heapinfo()
-    #pygdb.interact()
-
-    data = pygdb.execute("x/10i $pc")
-    print data
-
-    pygdb.heapinfo()
 
     calloc_offset = 0x81a50
     calloc_ret_offset = 0x81C3D
     malloc_offset = 0x80c40
-
-    #calloc_offset = 0x84d10
-    #calloc_ret_offset = 0x81C3D
-    #malloc_offset = 0x84130
 
     __libc_calloc_addr = calloc_offset + pygdb.libc()
     malloc_addr = malloc_offset + pygdb.libc()
@@ -134,8 +106,6 @@ def main():
     print "malloc_addr_ret:", hex(malloc_addr_ret)
     free_addr_ret = pygdb.find_ret("__libc_free")
     print "free_addr_ret:", hex(free_addr_ret)
-    #pygdb.interact()
-
 
     pygdb.hook("__libc_free", hook_free, [], hook_ret = 0x7d20e+pygdb.libc())
     pygdb.hook(malloc_addr, hook_malloc, [], hook_ret = False)
@@ -150,7 +120,6 @@ def main():
 
 if __name__ == "__main__":
     main()
-
 ```
 ## Basic
 test script
@@ -526,4 +495,10 @@ TODO
 - (1). call_s safe call() -> save_context, call, restore_context 
 - (2). interact(prompt) -> modify 
 - (3). gdb_interact() -> interact with gdb in new terminal
+
+## 2020/06/6 Version 1.0.0
+- (1). merge angelheap(add gdb.execute func)
+- (2). modify chunk print(set HeapFilter fastbin/smallbin/unsortbin/largebin/tcache/top_lastreminder)
+- (3). modify hook function(search ret addr, OnEnter, OnRet)
+- (4). modify `gdb file` for more debug info
 
