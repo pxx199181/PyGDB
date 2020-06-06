@@ -204,9 +204,6 @@ class PyGDB():
 		#print(self.banner)
 		self.run_gdb()
 
-		if self.bin_path is not None:
-			self.do_gdb("file %s"%self.bin_path)
-
 	def getarch(self):
 		capsize = 0
 		word = 0
@@ -269,12 +266,16 @@ class PyGDB():
 			self.target_argv = "attach %d"%target
 
 	def start(self):
+		if self.bin_path is not None:
+			self.do_gdb("file %s"%self.bin_path)
 		self.is_local = True
 		result = self.do_gdb_ret("start")
 		self.dbg_pid = self.get_dbg_pid()
 		self.target_argv = "attach %d"%self.dbg_pid
 
 	def run(self):
+		if self.bin_path is not None:
+			self.do_gdb("file %s"%self.bin_path)
 		self.is_local = True
 		result = self.do_gdb_ret("run")
 		self.dbg_pid = self.get_dbg_pid()
