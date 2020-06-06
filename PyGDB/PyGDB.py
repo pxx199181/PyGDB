@@ -936,7 +936,6 @@ class PyGDB():
 		old_data = ""
 		if use_addr is None:
 			use_addr = pc
-			old_data = self.read_mem(pc, 0x10)
 		else:
 			self.set_reg("pc", use_addr)
 
@@ -967,6 +966,7 @@ class PyGDB():
 		next_addr = int(addr_hex, 16)
 		
 		#sp = self.get_reg("sp")
+		old_data = self.read_mem(pc, len(data))
 		self.write_mem(use_addr, data)
 
 		repair_stack_offset = 0
