@@ -1022,7 +1022,7 @@ class PyGDB():
 
 	def get_symbol_value(self, name):
 		data = self.do_gdb_ret("print %s"%name)
-		print "data:", data
+		#print "data:", data
 		pos_b = data.find(" 0x")
 		if pos_b == -1:
 			return 0
@@ -1661,6 +1661,10 @@ int main() {
 	def fakefast(self,*arg):
 		(addr,size) = normalize_argv(arg,2)
 		mf_angelheap.get_fake_fast(addr,size)
+
+	def setHeapFilter(self, *arg):
+		(heapFilter, ) = normalize_argv(arg,1)
+		mf_angelheap.setHeapFilter(heapFilter)
 
 	def find_ret(self, addr):
 		if type(addr) == str:

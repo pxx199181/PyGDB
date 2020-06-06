@@ -56,10 +56,17 @@ reallocbp = None
 capsize = 0
 word = ""
 arch = ""
+
 gdb = None
-def init_gdb(tgdb):
+def init_gdb(t_gdb):
     global gdb
-    gdb = tgdb
+    gdb = t_gdb
+
+traceFilter = "all"
+def setHeapFilter(t_traceFilter):
+    global traceFilter;
+    traceFilter = t_traceFilter
+
 #condition
 corruptbin = False
 
@@ -442,6 +449,12 @@ def check_overlap(addr,size,data = None):
     return None,None
 
 def get_top_lastremainder(arena=None):
+
+    #modify_xx
+    global traceFilter
+    if "top_lastremainder" not in traceFilter and "all" not in traceFilter:
+        return ;
+        
     global fastbinsize
     global top
     global last_remainder
@@ -477,6 +490,12 @@ def get_top_lastremainder(arena=None):
     last_remainder = copy.deepcopy(chunk)
 
 def get_fast_bin(arena=None):
+
+    #modify_xx
+    global traceFilter
+    if "fastbin" not in traceFilter and "all" not in traceFilter:
+        return ;
+        
     global fastbin
     global fastchunk
     global fastbinsize
@@ -580,6 +599,12 @@ def get_tcache_count() :
             tcache_count.append((c >> j * 8*tcache_counts_size) & 0xff)
 
 def get_tcache_entry():
+
+    #modify_xx
+    global traceFilter
+    if "tcache" not in traceFilter and "all" not in traceFilter:
+        return ;
+
     global tcache_entry
     get_tcache()
     if not tcache_enable :
@@ -695,6 +720,12 @@ def trace_normal_bin(chunkhead,arena=None):
     return bins
 
 def get_unsortbin(arena=None):
+
+    #modify_xx
+    global traceFilter
+    if "unsortbin" not in traceFilter and "all" not in traceFilter:
+        return ;
+
     global unsortbin
     if not arena :
         arena = main_arena
@@ -707,6 +738,12 @@ def get_unsortbin(arena=None):
     unsortbin = trace_normal_bin(chunkhead,arena)
 
 def get_smallbin(arena=None):
+
+    #modify_xx
+    global traceFilter
+    if "smallbin" not in traceFilter and "all" not in traceFilter:
+        return ;
+        
     global smallbin
     if not arena :
         arena = main_arena
@@ -761,6 +798,12 @@ def largbin_index(size):
     return idx 
 
 def get_largebin(arena=None):
+
+    #modify_xx
+    global traceFilter
+    if "largebin" not in traceFilter and "all" not in traceFilter:
+        return ;
+        
     global largebin
     global corruptbin
     if not arena :
@@ -1241,12 +1284,13 @@ def putheapinfo(arena=None):
         arch = getarch()
     if not putfastbin(arena) :
         return
-    if "memerror" in top :
-        print("\033[35m %20s:\033[31m 0x%x \033[33m(size : 0x%x)\033[31m (%s)\033[37m " % ("top",top["addr"],top["size"],top["memerror"]))
-    else :
-        print("\033[35m %20s:\033[34m 0x%x \033[33m(size : 0x%x)\033[37m " % ("top",top["addr"],top["size"]))
-
-    print("\033[35m %20s:\033[34m 0x%x \033[33m(size : 0x%x)\033[37m " % ("last_remainder",last_remainder["addr"],last_remainder["size"]))
+    if top:
+        if "memerror" in top :
+            print("\033[35m %20s:\033[31m 0x%x \033[33m(size : 0x%x)\033[31m (%s)\033[37m " % ("top",top["addr"],top["size"],top["memerror"]))
+        else :
+            print("\033[35m %20s:\033[34m 0x%x \033[33m(size : 0x%x)\033[37m " % ("top",top["addr"],top["size"]))
+    if last_remainder:
+        print("\033[35m %20s:\033[34m 0x%x \033[33m(size : 0x%x)\033[37m " % ("last_remainder",last_remainder["addr"],last_remainder["size"]))
     if unsortbin and len(unsortbin) > 0 :
         print("\033[35m %20s:\033[37m " % "unsortbin",end="")
         for chunk in unsortbin :
