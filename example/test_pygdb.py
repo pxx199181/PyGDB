@@ -66,40 +66,42 @@ def test_arm():
 	pygdb.interact()
 
 def test_hook():
-	def hook_test(pygdb, id, addr, value):
-		pc = pygdb.get_reg("pc")
-		print("pc:", hex(pc))
-		print("id--:", id)
-		print("addr:", hex(addr))
-		print("value:", value)
+	def hook_test(pygdb, bpType, id, addr, value):
+		if bpType == "OnEnter":
+			pc = pygdb.get_reg("pc")
+			print("pc:", hex(pc))
+			print("id--:", id)
+			print("addr:", hex(addr))
+			print("value:", value)
 
-	def hook_out(pygdb, id, addr, value):
-		pc = pygdb.get_reg("pc")
-		print("pc:", hex(pc))
-		print("id--:", id)
-		print("addr:", hex(addr))
-		print("value:", value)
+	def hook_out(pygdb, bpType, id, addr, value):
+		if bpType == "OnEnter":
+			pc = pygdb.get_reg("pc")
+			print("pc:", hex(pc))
+			print("id--:", id)
+			print("addr:", hex(addr))
+			print("value:", value)
 
-		rbp = pygdb.get_reg("rbp")
-		val = pygdb.read_int(rbp - 4)
-		if val == 10:
-			return False
-		else:
-			print("val:", val)
+			rbp = pygdb.get_reg("rbp")
+			val = pygdb.read_int(rbp - 4)
+			if val == 10:
+				return False
+			else:
+				print("val:", val)
 
-		if val == 4:
-			pygdb.remove_hook(0x40054d)
-		else:
-			pass
+			if val == 4:
+				pygdb.remove_hook(0x40054d)
+			else:
+				pass
 
-		if val == 5:
-			pygdb.remove_hook(0x400552)
-		else:
-			pass
+			if val == 5:
+				pygdb.remove_hook(0x400552)
+			else:
+				pass
 
 	pygdb = PyGDB(target = "./test_hook")
-	pygdb.hook(0x40054d, hook_test, [pygdb, 0, 0x40054d, "call printf",])
-	pygdb.hook(0x400552, hook_out, [pygdb, 0, 0x400552, "cmp",])
+	pygdb.hook(0x40054d, hook_test, [0, 0x40054d, "call printf",])
+	pygdb.hook(0x400552, hook_out, [0, 0x400552, "cmp",])
 
 	pygdb.start()
 
@@ -202,14 +204,15 @@ def test_mmap():
 	print "code_asm:"
 	print code_asm
 	
-	def hook_count(pygdb, id, addr, value):
+	def hook_count(pygdb, bpType, id, addr, value):
 		#rdi = pygdb.
-		pygdb.globals["count"] += 1
-		if pygdb.globals["count"] > 5:
-			pygdb.remove_hook(addr)
-			del pygdb.globals["count"]
-			return
-		print "count", pygdb.globals["count"]
+		if bpType == "OnEnter":
+			pygdb.globals["count"] += 1
+			if pygdb.globals["count"] > 5:
+				pygdb.remove_hook(addr)
+				del pygdb.globals["count"]
+				return
+			print "count", pygdb.globals["count"]
 
 	pygdb.globals["count"] = 0
 	#pygdb.hook(0x8304029, hook_count, [pygdb, 0, 0x8304029, "call 0x8304029",])
@@ -257,13 +260,14 @@ def test_patch():
 
 	
 def test_dup_io():
-	def hook(pygdb):
-		data = pygdb.get_regs()
-		print data
-		data = pygdb.get_code(count = 10)
-		print data
-		data = pygdb.get_stack(count = 20)
-		print data
+	def hook(pygdb, bpType):
+		if bpType == "OnEnter":
+			data = pygdb.get_regs()
+			print data
+			data = pygdb.get_code(count = 10)
+			print data
+			data = pygdb.get_stack(count = 20)
+			print data
 
 	pygdb = PyGDB(target = "./test_dup_io")
 	b_id, _ = pygdb.set_bp("main")
@@ -272,7 +276,7 @@ def test_dup_io():
 
 	pygdb.dup_io(port = 12345, new_terminal = True)
 	#pygdb.dup_io(port = 12345, new_terminal = False)
-	pygdb.hook(0x400883, hook, [pygdb])
+	pygdb.hook(0x400883, hook, [])
 	pygdb.Continue()
 	#pygdb.detach()
 	pygdb.interact()
