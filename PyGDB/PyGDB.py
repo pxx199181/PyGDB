@@ -1,4 +1,4 @@
-
+import mf_angelheap
 try:
 	from pwn import *
 	from pwnlib.util import misc
@@ -24,7 +24,6 @@ import sys
 
 reload(sys)
 sys.setdefaultencoding('utf-8')
-
 import commands
 def do_command(cmd_line):
 	(status, output) = commands.getstatusoutput(cmd_line)
@@ -52,6 +51,34 @@ def byteify(input, encoding='utf-8'):
 	else:
 		return input
 
+
+def to_int(val):
+	"""
+	Convert a string to int number
+	from https://github.com/longld/peda
+	"""
+	try:
+		return int(str(val), 0)
+	except:
+		return None
+
+def normalize_argv(args, size=0):
+	"""
+	Normalize argv to list with predefined length
+	from https://github.com/longld/peda
+	"""
+	args = list(args)
+	for (idx, val) in enumerate(args):
+		if to_int(val) is not None:
+			args[idx] = to_int(val)
+		if size and idx == size:
+			return args[:idx]
+
+	if size == 0:
+		return args
+	for i in range(len(args), size):
+		args += [None]
+	return args
 
 alpha_bet_printable = string.printable[:-5]
 def PyGDB_hexdump(data, addr = 0, show = True, width = 16):
@@ -110,6 +137,7 @@ def PyGDB_unhexdump(data, width = 16):
 class PyGDB():
 	def __init__(self, target = None, arch = None):
 		self.load_init(target, arch)
+		mf_angelheap.init_gdb(self)
 
 	def load_init(self, target = None, arch = None):
 		PYGDBFILE = os.path.abspath(os.path.expanduser(__file__))
@@ -654,21 +682,30 @@ class PyGDB():
 				addr += self.get_codebase()
 		return addr
 
-	def hook(self, addr, handler, args = [], is_pie = False):
+	def hook(self, addr, handler, args = [], hook_ret = None, is_pie = False):
 		addr = self.real_addr(addr, is_pie)
 
 		if addr in self.hook_map.keys():
 			self.remove_hook(addr)
 
 		num, addr_v = self.set_bp(addr)
-		self.hook_map[addr_v] = [num, handler, args, addr]
+		if hook_ret is not None:
+			if hook_ret == True or hook_ret == 0:
+				ret_addr = self.find_ret(addr)
+			else:
+				ret_addr = hook_ret
+			num_ret, addr_v_ret = self.set_bp(ret_addr) 
+			self.hook_map[ret_addr] = [num_ret, handler, args, ret_addr, ["OnRet", None, None]]
+		else:
+			num_ret, ret_addr = None, None
+		self.hook_map[addr_v] = [num, handler, args, addr, ["OnEnter", num_ret, ret_addr]]
 		return 
 	
 	def resore_hook(self):
 		for addr in self.hook_map.keys():
-			[num, handler, args, addr] = self.hook_map[addr_v]
+			[num, handler, args, addr, hook_info] = self.hook_map[addr_v]
 			num, addr_v = self.set_bp(addr)
-			self.hook_map[addr_v] = [num, handler, args, addr]
+			self.hook_map[addr_v] = [num, handler, args, addr, hook_info]
 			return 
 
 	def clear_hook(self):
@@ -681,12 +718,23 @@ class PyGDB():
 
 		if addr in self.hook_map.keys():
 			num = self.hook_map[addr][0]
+			hook_info = self.hook_map[addr][-1]
+			if hook_info[1] is not None:
+				self.del_bp(hook_info[1])
+				self.hook_map.pop(hook_info[2])
+
 			self.del_bp(num)
 			self.hook_map.pop(addr)
+					
 		elif type(addr) is str:
 			for key in self.hook_map.keys():
 				if addr == self.hook_map[key][3]:
-					num = self.hook_map[key][0]
+					num = self.hook_map[key][0]					
+					hook_info = self.hook_map[key][-1]
+					if hook_info[1] is not None:
+						self.del_bp(hook_info[1])
+						self.hook_map.pop(hook_info[2])
+
 					self.del_bp(num)
 					self.hook_map.pop(key)
 					break
@@ -713,8 +761,8 @@ class PyGDB():
 				self._continue()
 				pc = self.get_reg("pc")
 				if pc in self.hook_map.keys():
-					num, handler, args, addr = self.hook_map[pc]
-					ret_v = handler(*args)
+					num, handler, args, addr, hook_info = self.hook_map[pc]
+					ret_v = handler(self, hook_info[0], *args)
 					if ret_v is not None and ret_v == False:
 						return pc
 				else:
@@ -973,6 +1021,7 @@ class PyGDB():
 
 	def get_symbol_value(self, name):
 		data = self.do_gdb_ret("print %s"%name)
+		print "data:", data
 		pos_b = data.find(" 0x")
 		if pos_b == -1:
 			return 0
@@ -983,9 +1032,11 @@ class PyGDB():
 		return real_addr
 
 	def get_lib_symbol(self, name, lib_path = "libc.so.6"):
+		self.save_context()
 		if "dlopen" not in self.priv_globals.keys():
-			self.priv_globals["__libc_dlopen_mode"] = self.get_symbol_value("__libc_dlopen_mode")
-			self.priv_globals["__libc_dlsym"] = self.get_symbol_value("__libc_dlsym")
+			if "__libc_dlopen_mode" not in self.priv_globals.keys():
+				self.priv_globals["__libc_dlopen_mode"] = self.get_symbol_value("__libc_dlopen_mode")
+				self.priv_globals["__libc_dlsym"] = self.get_symbol_value("__libc_dlsym")
 			
 			libdl = "libdl.so.2"
 			args = [libdl + "\x00", 0x80000001]
@@ -1002,6 +1053,7 @@ class PyGDB():
 		real_addr = self.call(self.priv_globals["dlsym"], args)
 		if real_addr == 0:
 			print "[!]", name, ":", hex(real_addr)
+		self.restore_context()
 		return real_addr
 
 	def fix_got(self, got_name, got_addr,  dlsym = True, lib_path = "libc.so.6"):
@@ -1508,7 +1560,8 @@ int main() {
 
 	def gdb_interact(self, break_list = [], gdbscript = "", init_file = ".self.init", terminal = None, sudo = True):
 		pc = self.get_reg("pc")
-		halt_code = self._asm_("jmp 0x%x"%pc, pc)
+		#halt_code = self._asm_("jmp 0x%x"%pc, pc)
+		halt_code = self._asm_("jmp $", pc)
 		restore_value = self.read_long(pc)
 		self.write_mem(pc, halt_code)
 		target = self.get_target()
@@ -1543,3 +1596,83 @@ int main() {
 		self.call_s("setvbuf", [stdin, 0, 2, 0])
 		self.call_s("setvbuf", [stdout, 0, 2, 0])
 		self.call_s("setvbuf", [stderr, 0, 2, 0])
+
+	def execute(self, cmdline, to_string = True):
+		data = self.do_gdb_ret(cmdline)
+		if to_string == True:
+			return data
+		else:
+			try:
+				return int(data, 16)
+			except Exception, e:
+				return int(data)
+
+	def heapinfo(self,*arg):
+		""" Print some information of heap """
+		(arena,) = normalize_argv(arg,1)
+		mf_angelheap.putheapinfo(arena)
+
+	def heapinfoall(self):
+		""" Print some information of multiheap """
+		mf_angelheap.putheapinfoall()
+
+	def arenainfo(self):
+		""" Print all arena info """
+		mf_angelheap.putarenainfo()
+
+	def chunkinfo(self,*arg):
+		""" Print chunk information of victim"""
+		(victim,) = normalize_argv(arg,1)
+		mf_angelheap.chunkinfo(victim)
+
+	def free(self,*arg):
+		""" Print chunk is freeable """
+		(victim,) = normalize_argv(arg,1)
+		mf_angelheap.freeptr(victim)
+
+	def chunkptr(self,*arg):
+		""" Print chunk information of user ptr"""
+		(ptr,) = normalize_argv(arg,1)
+		mf_angelheap.chunkptr(ptr)
+
+	def mergeinfo(self,*arg):
+		""" Print merge information of victim"""
+		(victim,) = normalize_argv(arg,1)
+		mf_angelheap.mergeinfo(victim)
+
+	def force(self,*arg):
+		""" Calculate the nb in the house of force """
+		(target,) = normalize_argv(arg,1)
+		mf_angelheap.force(target)
+
+	def printfastbin(self):
+		""" Print the fastbin """
+		mf_angelheap.putfastbin()
+
+	def inused(self):
+		""" Print the inuse chunk """
+		mf_angelheap.putinused()
+
+	def parseheap(self):
+		""" Parse heap """
+		mf_angelheap.parse_heap()
+
+	def fakefast(self,*arg):
+		(addr,size) = normalize_argv(arg,2)
+		mf_angelheap.get_fake_fast(addr,size)
+
+	def find_ret(self, addr):
+		if type(addr) == str:
+			addr = self.get_symbol_value(addr)
+		old_addr = addr
+		while addr - old_addr < 0x10000:
+			content = self.execute("x/40i 0x%x"%addr)
+			for line in content.split("\n"):
+				items = line.strip().split(":\t")
+				if len(items) < 2:
+					break
+				cur_addr = int(items[0].strip().split(" ")[0], 16)
+				opcode = items[1].strip().split(" ")[0]
+				if opcode.startswith("ret"):
+					return cur_addr
+				addr = cur_addr
