@@ -939,13 +939,14 @@ class PyGDB():
 		else:
 			self.set_reg("pc", use_addr)
 
-
+		nop_step_info = ""
 		if self.arch.lower() in ["arm", "arch64"]:
 			call_reg = "r%d"%len(args)
 			self.set_reg(call_reg, func_addr)
 			asm_info = ""
 			asm_info += "bl %s\n"%call_reg
 			asm_info += "mov r0, r0"
+			nop_step_info = "mov r0, r0"
 		else:
 			if "64" in self.arch:
 				call_reg = "rax"
@@ -956,6 +957,7 @@ class PyGDB():
 			asm_info = ""
 			asm_info += "call %s\n"%call_reg
 			asm_info += "nop"
+			nop_step_info = "nop"
 		
 
 		data = asm(asm_info ,vma = use_addr, arch = self.arch, os = "linux")
@@ -964,9 +966,13 @@ class PyGDB():
 		#print disasm_info
 		addr_hex = disasm_info.strip().split("\n")[1].split(":")[0].strip()
 		next_addr = int(addr_hex, 16)
+
+		nop_step_data = asm(nop_step_info, arch = self.arch, os = "linux")
+		#print "nop_step_info", nop_step_info
+		#print "nop_step_data", nop_step_data.encode("hex")
 		
 		#sp = self.get_reg("sp")
-		old_data = self.read_mem(pc, len(data))
+		old_data = self.read_mem(pc-len(nop_step_data), len(nop_step_data) + len(data))
 		self.write_mem(use_addr, data)
 
 		repair_stack_offset = 0
@@ -998,6 +1004,7 @@ class PyGDB():
 				self.set_reg("sp", sp)
 
 		#self.interact()
+
 		if len(self.hook_map.keys()) != 0:
 			self.run_until(next_addr)
 		else:
@@ -1008,10 +1015,15 @@ class PyGDB():
 			self.interact()
 
 		#self.del_bp(bp_num)
+		if old_data != "":
+			nop_step_sz = len(nop_step_data)
+			self.write_mem(use_addr-nop_step_sz, nop_step_data + old_data[nop_step_sz:])
+			self.set_reg("pc", use_addr-nop_step_sz)
+			self.stepi()
+			self.write_mem(use_addr-nop_step_sz, old_data[:nop_step_sz])
+			
 		self.set_reg("pc", pc)
 		self.set_reg("sp", origin_sp)
-		if old_data != "":
-			self.write_mem(pc, old_data)
 
 		ret_v = 0
 		if self.arch.lower() in ["arm", "arch64"]:
@@ -1524,10 +1536,12 @@ int main() {
 				addr_v = int(addr_v, 16)
 		return thread_num, addr_v
 
+	"""
 	def call_s(self, func, args = [], lib_path = "libc.so.6", use_addr = None):
-		self.save_context()
-		self.call(func, args, lib_path, use_addr)
-		self.restore_context()
+		#self.save_context()
+		self.invoke_s(self.call, func, args, lib_path, use_addr)
+		#self.restore_context()
+	"""
 
 	def get_target(self):
 		return self.target_argv
@@ -1685,3 +1699,27 @@ int main() {
 				if opcode.startswith("ret"):
 					return cur_addr
 				addr = cur_addr
+
+	def invoke_s(self, func, *args, **kwrds):
+		self.save_context()
+		func(*args, **kwrds)
+		self.restore_context()
+
+	def __getattr__(self, key):
+		#print "__getattr__", key
+		if key in self.__dict__:
+			return self.__dict__[key]
+
+		if key in PyGDB.__dict__:
+			return PyGDB.__dict__[key]
+
+		if key.endswith("_s"):
+			real_key = key[:-2]
+			if real_key in PyGDB.__dict__:
+				#print "real_key in"
+				def wrap(*args, **kwrds):
+					func = getattr(PyGDB, real_key)
+					args = [self] + list(args)
+					return self.invoke_s(func, *args, **kwrds)
+				return wrap
+		raise AttributeError("'module' object has no attribute '%s'" % key)

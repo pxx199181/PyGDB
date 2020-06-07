@@ -67,6 +67,14 @@ def setHeapFilter(t_traceFilter):
     global traceFilter;
     traceFilter = t_traceFilter
 
+def checkHeapFilter(typeSigner):
+    global traceFilter
+    type_signer = typeSigner
+    no_type_signer = "~" + type_signer
+    if no_type_signer in traceFilter or type_signer not in traceFilter and "all" not in traceFilter:
+        return False
+    return True
+
 #condition
 corruptbin = False
 
@@ -451,9 +459,8 @@ def check_overlap(addr,size,data = None):
 def get_top_lastremainder(arena=None):
 
     #modify_xx
-    global traceFilter
-    if "top_lastremainder" not in traceFilter and "all" not in traceFilter:
-        return ;
+    if checkHeapFilter("top_lastremainder") == False:
+        return
         
     global fastbinsize
     global top
@@ -492,9 +499,8 @@ def get_top_lastremainder(arena=None):
 def get_fast_bin(arena=None):
 
     #modify_xx
-    global traceFilter
-    if "fastbin" not in traceFilter and "all" not in traceFilter:
-        return ;
+    if checkHeapFilter("fastbin") == False:
+        return
         
     global fastbin
     global fastchunk
@@ -601,9 +607,8 @@ def get_tcache_count() :
 def get_tcache_entry():
 
     #modify_xx
-    global traceFilter
-    if "tcache" not in traceFilter and "all" not in traceFilter:
-        return ;
+    if checkHeapFilter("tcache") == False:
+        return
 
     global tcache_entry
     get_tcache()
@@ -722,9 +727,8 @@ def trace_normal_bin(chunkhead,arena=None):
 def get_unsortbin(arena=None):
 
     #modify_xx
-    global traceFilter
-    if "unsortbin" not in traceFilter and "all" not in traceFilter:
-        return ;
+    if checkHeapFilter("unsortbin") == False:
+        return
 
     global unsortbin
     if not arena :
@@ -740,9 +744,8 @@ def get_unsortbin(arena=None):
 def get_smallbin(arena=None):
 
     #modify_xx
-    global traceFilter
-    if "smallbin" not in traceFilter and "all" not in traceFilter:
-        return ;
+    if checkHeapFilter("smallbin") == False:
+        return
         
     global smallbin
     if not arena :
@@ -800,9 +803,8 @@ def largbin_index(size):
 def get_largebin(arena=None):
 
     #modify_xx
-    global traceFilter
-    if "largebin" not in traceFilter and "all" not in traceFilter:
-        return ;
+    if checkHeapFilter("largebin") == False:
+        return
         
     global largebin
     global corruptbin
@@ -1306,7 +1308,8 @@ def putheapinfo(arena=None):
                 print(" <--> ",end = "")
         print("")
     else :
-        print("\033[35m %20s:\033[37m 0x%x" % ("unsortbin",0)) #no chunk in unsortbin
+        if checkHeapFilter("unsortbin") != False:
+            print("\033[35m %20s:\033[37m 0x%x" % ("unsortbin",0)) #no chunk in unsortbin
     for size,bins in smallbin.items() :
         idx = int((int(size,16)/(capsize*2)))-2 
         print("\033[33m(0x%03x)  %s[%2d]:\033[37m " % (int(size,16),"smallbin",idx),end="")
