@@ -896,7 +896,7 @@ class PyGDB():
 			size = value[1]
 			self.write_mem(addr, data[offset:offset+size])
 
-	def call(self, func, args = [], lib_path = "libc.so.6", use_addr = None):
+	def call(self, func, args = [], lib_path = "libc.so.6", use_addr = None, call_reg = None):
 		"""
 		args = [arg0, arg1, arg2, ...]
 		"""
@@ -941,17 +941,19 @@ class PyGDB():
 
 		nop_step_info = ""
 		if self.arch.lower() in ["arm", "arch64"]:
-			call_reg = "r%d"%len(args)
+			if call_reg is None:
+				call_reg = "r%d"%len(args)
 			self.set_reg(call_reg, func_addr)
 			asm_info = ""
 			asm_info += "bl %s\n"%call_reg
 			asm_info += "mov r0, r0"
 			nop_step_info = "mov r0, r0"
 		else:
-			if "64" in self.arch:
-				call_reg = "rax"
-			else:
-				call_reg = "eax"
+			if call_reg is None:
+				if "64" in self.arch:
+					call_reg = "rax"
+				else:
+					call_reg = "eax"
 
 			self.set_reg(call_reg, func_addr)
 			asm_info = ""
