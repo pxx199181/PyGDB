@@ -1251,6 +1251,185 @@ class PyGDB():
 
 		self.restore_context()
 
+
+	def call_syscall(self, syscall, args):
+
+		pc = self.get_reg("pc")
+		origin_sp = sp = self.get_reg("sp")
+
+		args_new = []
+		for item in args:
+			if type(item) == str:
+				sp -= len(item)
+				args_new.append(sp)
+				self.write_mem(sp, item)
+			else:
+				args_new.append(item)
+
+		if "64" in self.arch:
+			sp -= sp%8
+		else:
+			sp -= sp%4
+
+		self.set_reg("sp", sp)
+		args = args_new
+
+		context(arch = self.arch, os = 'linux')
+		#print args
+		code_asm = shellcraft.syscall(syscall, *args)
+		#print code_asm
+		shellcode = asm(code_asm)
+		ret_v = self.run_shellcode(shellcode)
+
+		self.set_reg("pc", pc)
+		self.set_reg("sp", origin_sp)
+		#print "ret_v:", ret_v
+
+		return ret_v
+
+	def call_static(self, func, args, need_parse = True):
+
+		#print "call_static:", func, args
+		pc = self.get_reg("pc")
+		origin_sp = sp = self.get_reg("sp")
+
+		if need_parse:
+			args_new = []
+			for item in args:
+				if type(item) == str:
+					sp -= len(item)
+					args_new.append(sp)
+					self.write_mem(sp, item)
+				else:
+					args_new.append(item)
+
+			if "64" in self.arch:
+				sp -= sp%8
+			else:
+				sp -= sp%4
+
+			self.set_reg("sp", sp)
+			args = args_new
+
+		context(arch = self.arch, os = 'linux')
+		code_asm = getattr(shellcraft, func)(*args)
+		#print code_asm
+		shellcode = asm(code_asm)
+		ret_v = self.run_shellcode(shellcode)
+
+		self.set_reg("pc", pc)
+		self.set_reg("sp", origin_sp)
+		#print "ret_v:", ret_v
+
+		return ret_v
+
+	def run_shellcode(self, shellcode):
+
+		if io_wrapper == "zio":
+			print("please install pwntools")
+			return
+
+		pc = self.get_reg("pc")
+
+		nop_step_info = ""
+		if self.arch.lower() in ["arm", "arch64"]:
+			nop_step_info = "mov r0, r0"
+		else:
+			nop_step_info = "nop"
+
+		nop_step_data = asm(nop_step_info, arch = self.arch, os = "linux")
+
+		old_data = self.read_mem(pc-len(nop_step_data), len(nop_step_data) + len(shellcode))
+		self.write_mem(pc, shellcode)
+
+		self.run_until(pc + len(shellcode))
+		if old_data != "":
+			nop_step_sz = len(nop_step_data)
+			self.write_mem(pc-nop_step_sz, nop_step_data + old_data[nop_step_sz:])
+			self.set_reg("pc", pc-nop_step_sz)
+			self.stepi()
+			self.write_mem(pc-nop_step_sz, old_data[:nop_step_sz])
+
+		ret_v = 0
+		if self.arch.lower() in ["arm", "arch64"]:
+			ret_v = self.get_reg("r0")
+		else:
+			if "64" in self.arch:
+				ret_v = self.get_reg("rax")
+			else:
+				ret_v = self.get_reg("eax")
+
+		#print "run_shellcode:", ret_v
+		return ret_v
+
+
+	def dup_io_static(self, port = 9999, ip = "0.0.0.0", new_terminal = True):
+		self.save_context()
+		"""
+		struct sockaddr_in {
+			 unsigned short		 sin_family;	
+			 unsigned short int	 sin_port;	  
+			 struct in_addr		 sin_addr;	  
+			 unsigned char		  sin_zero[8];   
+		};
+		struct in_addr {
+			unsigned long	 s_addr;
+		};
+		Lewis.sin_family	  = AF_INET;
+		Lewis.sin_port		= htons(port);
+		Lewis.sin_addr.s_addr = inet_addr(ip);
+		memset(Lewis.sin_zero,0,sizeof(Lewis.sin_zero));
+		"""
+		def parse_ip(ip):
+			data = ""
+			for item in ip.split("."):
+				data += p8(int(item))
+			return data
+
+		sockaddr_in = ""
+		sockaddr_in += p16(2)
+		sockaddr_in += p16(port, endian = 'big')
+		sockaddr_in += parse_ip(ip)
+		sockaddr_in += p64(0)
+
+		#self.hexdump(data = sockaddr_in)
+		#fd_tcp = socket(AF_INET, SOCK_STREAM, 0)
+		server = self.call_syscall('SYS_socket', [2, 1, 0])
+		#print "server", server
+
+		# setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &flag, len) 
+		SOL_SOCKET = 1
+		SO_REUSEADDR = 2
+		if self.call_syscall("SYS_setsockopt", [server, SOL_SOCKET, SO_REUSEADDR, p32(1), 4]) == -1:
+			print "setsockopt error"
+			return  
+		#bind(server,(struct sockaddr *)&serv_addr,0x10)
+		if (self.call_syscall("SYS_bind", [server, sockaddr_in, 0x10]) != 0):
+			print "bind error"
+			return 
+		#print "bind", server
+		#listen(server,0)
+		self.call_syscall("SYS_listen", [server, 0])
+		#print "listen", server
+
+		if new_terminal:
+			self.run_in_new_terminal("nc %s %d"%(ip, port), sleep_time = 0.5)
+		else:
+			print "wait io @ %s:%d"%(ip, port)
+		
+		#client=accept(server,0,0)
+		client = self.call_syscall("SYS_accept", [server, 0, 0])
+		#print "accept", client
+
+		#dup2(client,0)
+		#dup2(client,1)
+		#dup2(client,2)
+		self.call_static("dup2", [client, 0])
+		self.call_static("dup2", [client, 1])
+		self.call_static("dup2", [client, 2])
+
+		self.restore_context()
+
 	def patch_asm(self, addr, asm_info):
 		data = self._asm_(asm_info, addr)
 		self.write_mem(addr, data)
@@ -1465,9 +1644,9 @@ class PyGDB():
 							code_asm += "pop %s\n"%args_name[i]
 							in_arg_list.append(args_name[i])
 					else:
-						print getattr(shellcraft, name)("rdi", "rsi")
-						print shellcraft.write(*(self.arch_args[:args_count]))
-						print getattr(shellcraft, name)(*(self.arch_args[:args_count]))
+						#print getattr(shellcraft, name)("rdi", "rsi")
+						#print shellcraft.write(*(self.arch_args[:args_count]))
+						#print getattr(shellcraft, name)(*(self.arch_args[:args_count]))
 						code_asm = getattr(shellcraft, name)(*(self.arch_args[:args_count]))
 				else:
 					code_asm = getattr(shellcraft, name)()
