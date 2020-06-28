@@ -114,7 +114,7 @@ def PyGDB_hexdump(data, addr = 0, show = True, width = 16):
 		all_info = all_info[:-1]
 
 	if show:
-		print all_info
+		print(all_info)
 	return all_info
 
 
@@ -479,7 +479,7 @@ class PyGDB():
 					break
 				except KeyboardInterrupt:
 					pass
-			print "over"
+			print("over")
 
 		t = threading.Thread(target = recv_thread)
 		t.daemon = True
@@ -1067,7 +1067,7 @@ class PyGDB():
 		value = data[pos_b+1:].split()[0]
 		real_addr = int(value, 16)
 		if real_addr == 0:
-			print "[!]", name, ":", hex(real_addr)
+			print("[!]", name, ":", hex(real_addr))
 		return real_addr
 
 	def get_lib_symbol(self, name, lib_path = "libc.so.6"):
@@ -1091,7 +1091,7 @@ class PyGDB():
 		args = [self.priv_globals["lib_handle"][lib_path], name + "\x00"]
 		real_addr = self.call(self.priv_globals["dlsym"], args)
 		if real_addr == 0:
-			print "[!]", name, ":", hex(real_addr)
+			print("[!]", name, ":", hex(real_addr))
 		self.restore_context()
 		return real_addr
 
@@ -1242,11 +1242,11 @@ class PyGDB():
 		SOL_SOCKET = 1
 		SO_REUSEADDR = 2
 		if self.call("setsockopt", [server, SOL_SOCKET, SO_REUSEADDR, p32(1), 4]) == -1:
-			print "setsockopt error"
+			print("setsockopt error")
 			return  
 		#bind(server,(struct sockaddr *)&serv_addr,0x10)
 		if (self.call("bind", [server, sockaddr_in, 0x10]) != 0):
-			print "bind error"
+			print("bind error")
 			return 
 		#print "bind", server
 		#listen(server,0)
@@ -1256,7 +1256,7 @@ class PyGDB():
 		if new_terminal:
 			self.run_in_new_terminal("nc %s %d"%(ip, port), sleep_time = 0.5)
 		else:
-			print "wait io @ %s:%d"%(ip, port)
+			print("wait io @ %s:%d"%(ip, port))
 		
 		#client=accept(server,0,0)
 		client = self.call("accept", [server, 0, 0])
@@ -1421,11 +1421,11 @@ class PyGDB():
 		SOL_SOCKET = 1
 		SO_REUSEADDR = 2
 		if self.call_syscall("SYS_setsockopt", [server, SOL_SOCKET, SO_REUSEADDR, p32(1), 4]) == -1:
-			print "setsockopt error"
+			print("setsockopt error")
 			return  
 		#bind(server,(struct sockaddr *)&serv_addr,0x10)
 		if (self.call_syscall("SYS_bind", [server, sockaddr_in, 0x10]) != 0):
-			print "bind error"
+			print("bind error")
 			return 
 		#print "bind", server
 		#listen(server,0)
@@ -1435,7 +1435,7 @@ class PyGDB():
 		if new_terminal:
 			self.run_in_new_terminal("nc %s %d"%(ip, port), sleep_time = 0.5)
 		else:
-			print "wait io @ %s:%d"%(ip, port)
+			print("wait io @ %s:%d"%(ip, port))
 		
 		#client=accept(server,0,0)
 		client = self.call_syscall("SYS_accept", [server, 0, 0])
@@ -1503,7 +1503,7 @@ class PyGDB():
 		if ("error: " not in res.lower()):
 			return True
 		else:
-			print res
+			print(res)
 			return False
 
 
@@ -1610,7 +1610,7 @@ class PyGDB():
 
 		file_data = self.readfile(infile)
 		for addr in patch_config:
-			print addr
+			print(addr)
 			value = patch_config[addr]
 			data = ""
 			if type(value) == str:
@@ -1708,7 +1708,7 @@ int main() {
 }
 			"""
 		res = self.compile_cfile(source, gcc_path, option, obj_name + ".c", obj_name)
-		print "gen objfile @ %s"%obj_name
+		print("gen objfile @ %s"%obj_name)
 		self.load_init(target = obj_name)
 
 
@@ -1750,7 +1750,7 @@ int main() {
 	def wait_interact(self):
 		import signal
 
-		print "<wait for interact> (/continue/exit/quit/c/e/q/ctrl+c)"
+		print("<wait for interact> (/continue/exit/quit/c/e/q/ctrl+c)")
 		exit_sign = True
 		while True:
 			try:
