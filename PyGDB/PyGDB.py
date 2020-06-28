@@ -448,7 +448,7 @@ class PyGDB():
 		else:
 			self.detach()
 
-	def interact(self, prompt = "~> "):
+	def interact(self, prompt = "~> ", simple = True):
 		self.do_pygdb("set_interact_mode 1")
 		print('[+] ' + 'Switching to interactive mode')
 		self.io.sendline("source ~/.gdbinit")
@@ -456,8 +456,9 @@ class PyGDB():
 		prompt = term.text.bold_red(prompt)
 		self.io.sendline("set prompt %s" % (prompt))
 
-		self.io.recvuntil(prompt)
-		self.io.sendline("context")
+		if simple == True:
+			self.io.recvuntil(prompt)
+			self.io.sendline("context")
 
 		if io_wrapper == "zio":
 			self.io.interact()
@@ -547,8 +548,24 @@ class PyGDB():
 			self.libc_base = None
 			return 0
 
+
+	def getprocname(self, relative=False):
+		procname = None
+		try:
+			data = self.execute("info proc exe",to_string=True)
+			procname = re.search("exe.*",data).group().split("=")[1][2:-1]
+		except:
+			data = self.execute("info files",to_string=True)
+			if data:
+				procname = re.search('Symbols from "(.*)"',data).group(1)
+		if procname and relative :
+			return procname.split("/")[-1]
+		return procname
+
 	def codeaddr(self): # ret (start, end)
-		pat = ".*"
+		#pat = ".*"
+		procname = self.getprocname()
+		pat = ".*" + procname
 		data = re.findall(pat, self.procmap())
 		if data :
 			codebaseaddr = data[0].split("-")[0]
@@ -590,6 +607,9 @@ class PyGDB():
 		if self.libc_base is not None:
 			return self.libc_base
 		return self.libcbase()
+
+	def code(self):
+		return self.codebase()
 
 	def attach_name(self, binary_name, idx = 0):
 		b_pos = binary_name.rfind("/")
@@ -694,8 +714,8 @@ class PyGDB():
 			self.remove_hook(addr)
 
 		num, addr_v = self.set_bp(addr)
-		if hook_ret is not None:
-			if hook_ret == True or hook_ret == 0:
+		if hook_ret is not None and hook_ret != False:
+			if hook_ret == True or hook_ret == 1:
 				ret_addr = self.find_ret(addr)
 			else:
 				ret_addr = hook_ret
