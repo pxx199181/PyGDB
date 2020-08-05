@@ -123,6 +123,8 @@ def PyGDB_unhexdump(data, width = 16):
 	for line in data.split("\n"):
 		if ": " in line:
 			line = line[line.index(": ") + 2:]
+		elif " " in line:
+			line = line[line.index(" ") + 1:]
 		line = line.strip()
 
 		#print "line:", line, len(line), width*3
