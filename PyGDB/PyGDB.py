@@ -1036,6 +1036,7 @@ class PyGDB():
 
 		cur_pc = self.get_reg("pc")
 		if cur_pc != next_addr:
+			print("cur_pc != next_addr")
 			self.interact()
 
 		#self.del_bp(bp_num)
