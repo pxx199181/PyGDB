@@ -281,9 +281,15 @@ class PyGDB():
 		self.dbg_pid = self.get_dbg_pid()
 		self.target_argv = "attach %d"%self.dbg_pid
 
-	def run(self):
+	def run(self, args = None):
 		self.is_local = True
-		result = self.do_gdb_ret("run")
+		cmdline = "run"
+		if args is not None:
+			if type(args) == str:
+				cmdline += " " + args
+			else:
+				cmdline += " " + " ".join(args)
+		result = self.do_gdb_ret(cmdline)
 		self.dbg_pid = self.get_dbg_pid()
 		self.target_argv = "attach %d"%self.dbg_pid
 			 
