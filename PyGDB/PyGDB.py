@@ -21,6 +21,7 @@ import re
 import threading
 import string
 import sys
+import commands
 
 reload(sys)
 sys.setdefaultencoding('utf-8')
@@ -136,17 +137,33 @@ def PyGDB_unhexdump(data, width = 16):
 
 	return final_data
 
-def PyGDB_readfile(self, filename, mode = "rb"):
+def PyGDB_readfile(filename, mode = "rb"):
 	with open(filename, mode) as fd:
 		return fd.read()
 
-def PyGDB_writefile(self, filename, data, mode = "wb"):
+def PyGDB_writefile(filename, data, mode = "wb"):
 	with open(filename, mode) as fd:
 		return fd.write(data)
 
 #https://www.muppetlabs.com/~breadbox/software/tiny/teensy.html
-def PyGDB_tiny_elf(shellocde, mode = 32):
-	pass
+def PyGDB_make_tiny_elf(shellcode, outfile = None, base = None, mode = 32):
+	if mode == 32:
+		if base is None:
+			base = 0x8048000
+		elf_bin = ""
+		elf_bin += "\x7fELF\x01\x01\x01".ljust(16, '\x00')
+		elf_bin += "\x02\x00\x03\x00\x01" + "\x00"*3 + p32(base + 0x54) + "\x34" + "\x00"*3
+		elf_bin += "\x00"*8 + "\x34\x00\x20\x00\x01" + "\x00"*3
+		elf_bin += "\x00"*4 + "\x01" + "\x00"*7 + p32(base)
+		elf_bin += p32(base) + p32(0x54 + len(shellcode))*2
+		elf_bin += "\x05\x00\x00\x00\x00\x10\x00\x00"
+		elf_bin += shellcode
+	else:
+		elf_bin = "bad"
+	if outfile is not None:
+		PyGDB_writefile(outfile, elf_bin)
+		do_command("chmod +x " + outfile)
+	return elf_bin
 
 class PyGDB():
 	def __init__(self, target = None, arch = None):
@@ -1511,8 +1528,7 @@ class PyGDB():
 			self.write_mem(addr, data)
 
 	def run_cmd(self, cmd_line):
-		import commands
-		(status, data) = commands.getstatusoutput(cmd_line)
+		data = do_command(cmdline)
 		return data
 
 	def gen_rand_str(self, size = 16):
@@ -2021,5 +2037,6 @@ int main() {
 				return wrap
 		raise AttributeError("'module' object has no attribute '%s'" % key)
 
-	def tiny_elf(self, shellocde, mode = 32):
-		return PyGDB_tiny_elf(shellocde, mode)
+	def make_tiny_elf(self, shellocde, outfile = None, base = None, mode = 32):
+		elf_bin = PyGDB_make_tiny_elf(shellocde, outfile, base, mode)
+		return elf_bin
