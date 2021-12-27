@@ -1464,7 +1464,7 @@ class ArmPEDACmd(PEDACmd):
         Usage:
             MYNAME count
         """
-        cmdline = " ".join(arg)
+        cmdline = " ".join([str(c) for c in arg])
         msg("cmdline:" + cmdline)
         return self.peda.execute_redirect(cmdline)
 

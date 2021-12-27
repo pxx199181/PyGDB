@@ -136,6 +136,18 @@ def PyGDB_unhexdump(data, width = 16):
 
 	return final_data
 
+def PyGDB_readfile(self, filename, mode = "rb"):
+	with open(filename, mode) as fd:
+		return fd.read()
+
+def PyGDB_writefile(self, filename, data, mode = "wb"):
+	with open(filename, mode) as fd:
+		return fd.write(data)
+
+#https://www.muppetlabs.com/~breadbox/software/tiny/teensy.html
+def PyGDB_tiny_elf(shellocde, mode = 32):
+	pass
+
 class PyGDB():
 	def __init__(self, target = None, arch = None):
 		self.load_init(target, arch)
@@ -155,6 +167,9 @@ class PyGDB():
 		
 		self.globals = {}
 		self.priv_globals = {}
+		self.priv_globals["lib_base"] = {}
+		self.priv_globals["lib_path"] = {}
+		self.priv_globals["lib_elf"] = {}
 		self.arch = arch
 		self.hook_map = {}
 		self.io = None
@@ -264,14 +279,15 @@ class PyGDB():
 		self.is_local = False
 		if type(target) == str:
 			if ":" in target:
-				self.do_gdb("file")
+				#self.do_gdb("file")
 				self.do_gdb_ret("target remote %s"%target)
 				self.target_argv = "target remote %s"%target
 			else:
 				self.attach_name(target, 0)
 		else:
-			self.do_gdb("file")
+			#self.do_gdb("file")
 			print("attach %d"%target)
+			self.dbg_pid = target
 			print(self.do_gdb_ret("attach %d"%target))
 			self.target_argv = "attach %d"%target
 
@@ -882,12 +898,10 @@ class PyGDB():
 			self.mmap(addr, size, flag)
 
 	def readfile(self, filename, mode = "rb"):
-		with open(filename, mode) as fd:
-			return fd.read()
+		return PyGDB_readfile(filename, mode)
 
 	def writefile(self, filename, data, mode = "wb"):
-		with open(filename, mode) as fd:
-			return fd.write(data)
+		return PyGDB_writefile(filename, data, mode)
 
 	def init_data_config(self, data_config):
 		"""
@@ -1080,6 +1094,12 @@ class PyGDB():
 		return real_addr
 
 	def get_lib_symbol(self, name, lib_path = "libc.so.6"):
+
+		if io_wrapper == "pwntools":
+			return self.get_lib_func(name, lib_path)
+		else:
+			return self.get_lib_func_dlsym(name, lib_path)
+		"""
 		self.save_context()
 		if "dlopen" not in self.priv_globals.keys():
 			if "__libc_dlopen_mode" not in self.priv_globals.keys():
@@ -1091,18 +1111,19 @@ class PyGDB():
 			libdl_handle = self.call(self.priv_globals["__libc_dlopen_mode"], args)
 			self.priv_globals["dlopen"] = self.get_symbol_value("dlopen")
 			self.priv_globals["dlsym"] = self.get_symbol_value("dlsym")
-			self.priv_globals["lib_handle"] = {}
+			#self.priv_globals["lib_base"] = {}
 
-		if lib_path not in self.priv_globals["lib_handle"].keys():
+		if lib_path not in self.priv_globals["lib_base"].keys():
 			args = [lib_path + "\x00", 1] #LAZY
-			self.priv_globals["lib_handle"][lib_path] = self.call(self.priv_globals["dlopen"], args)
-			#print "libc:", hex(self.priv_globals["lib_handle"])
-		args = [self.priv_globals["lib_handle"][lib_path], name + "\x00"]
+			self.priv_globals["lib_base"][lib_path] = self.call(self.priv_globals["dlopen"], args)
+			#print "libc:", hex(self.priv_globals["lib_base"])
+		args = [self.priv_globals["lib_base"][lib_path], name + "\x00"]
 		real_addr = self.call(self.priv_globals["dlsym"], args)
 		if real_addr == 0:
 			print("[!]", name, ":", hex(real_addr))
 		self.restore_context()
 		return real_addr
+		"""
 
 	def fix_got(self, got_name, got_addr,  dlsym = True, lib_path = "libc.so.6"):
 		if dlsym == True:
@@ -1721,14 +1742,74 @@ int main() {
 		self.load_init(target = obj_name)
 
 
-	def get_lib_base(self, libname):
+	def get_lib_base(self, libname, update = False):
+		if update == False:
+			if libname in self.priv_globals["lib_base"].keys():
+				return self.priv_globals['lib_base'][libname]
+
 		data = re.search(".*" + libname, self.procmap())
-		if data :
-			#print "data:", repr(data.group())
+		if data:
 			libaddr = data.group().split("-")[0]
+			self.priv_globals['lib_base'][libname] = int(libaddr, 16)
+
+			lib_path = data.group().split(" ")[-1]
+			self.priv_globals['lib_path'][libname] = lib_path
 			return int(libaddr, 16)
 		else :
 			return 0
+
+	def load_lib(self, lib_path, update = False):
+		if update == False and lib_path in self.priv_globals["lib_base"]:
+			return self.priv_globals["lib_base"][lib_path]
+
+		self.save_context()
+		if "dlopen" not in self.priv_globals.keys():
+			if "__libc_dlopen_mode" not in self.priv_globals.keys():
+				self.priv_globals["__libc_dlopen_mode"] = self.get_symbol_value("__libc_dlopen_mode")
+				self.priv_globals["__libc_dlsym"] = self.get_symbol_value("__libc_dlsym")
+			
+			libdl = "libdl.so.2"
+			args = [libdl + "\x00", 0x80000001]
+			libdl_handle = self.call(self.priv_globals["__libc_dlopen_mode"], args)
+			self.priv_globals["dlopen"] = self.get_symbol_value("dlopen")
+			self.priv_globals["dlsym"] = self.get_symbol_value("dlsym")
+			#self.priv_globals["lib_base"] = {}
+
+		args = [lib_path + "\x00", 1] #LAZY
+		self.priv_globals["lib_base"][lib_path] = self.call(self.priv_globals["dlopen"], args)
+		self.priv_globals['lib_path'][lib_path] = lib_path
+		#print "libc:", hex(self.priv_globals["lib_base"])
+		self.restore_context()
+		return self.priv_globals["lib_base"][lib_path]
+
+	def get_lib_func(self, name, libname = "libc.so.6"):
+		if libname not in self.priv_globals['lib_path'].keys():
+			self.get_lib_base(libname)
+			if libname not in self.priv_globals['lib_path'].keys():
+				self.load_lib(libname)
+
+		if libname not in self.priv_globals["lib_elf"]:
+			if io_wrapper == "zio":
+				print("please install pwntools")
+
+			self.priv_globals["lib_elf"][libname] = ELF(libname)
+
+		elf_info = self.priv_globals["lib_elf"][libname]
+		return elf_info.symbols["name"] + self.priv_globals["lib_base"]
+
+	def get_lib_func_dlsym(self, name, libname = "libc.so.6"):
+
+		if libname not in self.priv_globals['lib_path'].keys():
+			self.get_lib_base(libname)
+			if libname not in self.priv_globals['lib_path'].keys():
+				self.load_lib(libname)
+		self.save_context()
+		args = [self.priv_globals["lib_base"][lib_path], name + "\x00"]
+		real_addr = self.call(self.priv_globals["dlsym"], args)
+		if real_addr == 0:
+			print("[!]", name, ":", hex(real_addr))
+		self.restore_context()
+		return real_addr
 
 	def get_thread_id(self):
 		thread_num = 0
@@ -1933,3 +2014,6 @@ int main() {
 					return self.invoke_s(func, *args, **kwrds)
 				return wrap
 		raise AttributeError("'module' object has no attribute '%s'" % key)
+
+	def tiny_elf(self, shellocde, mode = 32):
+		return PyGDB_tiny_elf(shellocde, mode)
