@@ -938,7 +938,7 @@ class PyGDB():
 			size = value[1]
 			self.write_mem(addr, data[offset:offset+size])
 
-	def call(self, func, args = [], lib_path = "libc.so.6", use_addr = None, call_reg = None):
+	def call(self, func, args = [], lib_path = "libc", use_addr = None, call_reg = None):
 		"""
 		args = [arg0, arg1, arg2, ...]
 		"""
@@ -1093,7 +1093,7 @@ class PyGDB():
 			print("[!]", name, ":", hex(real_addr))
 		return real_addr
 
-	def get_lib_symbol(self, name, lib_path = "libc.so.6"):
+	def get_lib_symbol(self, name, lib_path = "libc"):
 
 		if io_wrapper == "pwntools":
 			return self.get_lib_func(name, lib_path)
@@ -1125,7 +1125,7 @@ class PyGDB():
 		return real_addr
 		"""
 
-	def fix_got(self, got_name, got_addr,  dlsym = True, lib_path = "libc.so.6"):
+	def fix_got(self, got_name, got_addr,  dlsym = True, lib_path = "libc"):
 		if dlsym == True:
 			real_addr = self.get_lib_symbol(got_name, lib_path)
 		else:
@@ -1747,12 +1747,18 @@ int main() {
 			if libname in self.priv_globals["lib_base"].keys():
 				return self.priv_globals['lib_base'][libname]
 
-		data = re.search(".*" + libname, self.procmap())
+		if ".*" not in libname:
+			pattern = ".*" + libname + ".*"
+		else:
+			pattern = libname
+		data = re.search(pattern, self.procmap())
+		#print(data)
 		if data:
 			libaddr = data.group().split("-")[0]
 			self.priv_globals['lib_base'][libname] = int(libaddr, 16)
 
 			lib_path = data.group().split(" ")[-1]
+			print("lib_path:", lib_path)
 			self.priv_globals['lib_path'][libname] = lib_path
 			return int(libaddr, 16)
 		else :
@@ -1782,7 +1788,7 @@ int main() {
 		self.restore_context()
 		return self.priv_globals["lib_base"][lib_path]
 
-	def get_lib_func(self, name, libname = "libc.so.6"):
+	def get_lib_func(self, name, libname = "libc"):
 		if libname not in self.priv_globals['lib_path'].keys():
 			self.get_lib_base(libname)
 			if libname not in self.priv_globals['lib_path'].keys():
@@ -1791,13 +1797,13 @@ int main() {
 		if libname not in self.priv_globals["lib_elf"]:
 			if io_wrapper == "zio":
 				print("please install pwntools")
-
-			self.priv_globals["lib_elf"][libname] = ELF(libname)
+			lib_path = self.priv_globals['lib_path'][libname]
+			self.priv_globals["lib_elf"][libname] = ELF(lib_path)
 
 		elf_info = self.priv_globals["lib_elf"][libname]
-		return elf_info.symbols["name"] + self.priv_globals["lib_base"]
+		return elf_info.symbols[name] + self.priv_globals["lib_base"][libname]
 
-	def get_lib_func_dlsym(self, name, libname = "libc.so.6"):
+	def get_lib_func_dlsym(self, name, libname = "libc"):
 
 		if libname not in self.priv_globals['lib_path'].keys():
 			self.get_lib_base(libname)
