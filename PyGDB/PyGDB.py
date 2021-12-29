@@ -400,7 +400,7 @@ class PyGDB():
 		ret_v = self.do_pygdb_ret("set_breakpoint %s %s"%(addr_str, cmdline))
 		#print ret_v
 		b_num = re.search("reakpoint \d+ at", ret_v)
-		if b_num :
+		if b_num:
 			b_num = b_num.group().split()[1]
 			fini_num = int(b_num)
 
@@ -424,6 +424,38 @@ class PyGDB():
 		if num is not None:
 			cmdline = "%d"%num
 		return self.do_pygdb_ret("get_breakpoint %s"%(cmdline))
+
+
+	def set_mem_bp(self, addr, w_type = "watch"):
+		if type(addr) is not str:
+			addr_str = "*0x%x"%addr
+		else:
+			addr_str = addr
+
+		ret_v = self.do_gdb_ret("%s %s"%(w_type, addr_str))
+		#print ret_v
+		b_num = re.search("atchpoint \d+:", ret_v)
+		if b_num:
+			b_num = b_num.group().split()[1].strip(":")
+			fini_num = int(b_num)
+
+			addr_v = self.cut_str(ret_v, "atchpoint %d: *"%fini_num)
+			if "\n" in addr_v:
+				addr_v = addr_v.split("\n")[0]
+			if addr_v is not None:
+				addr_v = int(addr_v, 16)
+
+			return fini_num, addr_v
+		return None, None
+
+	def watch(self, addr):
+		return self.set_mem_bp(addr, "watch")
+
+	def awatch(self, addr):
+		return self.set_mem_bp(addr, "awatch")
+
+	def rwatch(self, addr):
+		return self.set_mem_bp(addr, "rwatch")
 
 	def get_code(self, pc = None, count = None):
 		cmdline = ""
@@ -460,7 +492,8 @@ class PyGDB():
 		return self.do_pygdb_ret("stepover %s"%(cmdline))
 
 	def _continue(self):
-		return self.do_pygdb_ret("continue")
+		#return self.do_pygdb_ret("continue")
+		return self.do_gdb_ret("continue")
 
 	def get_dbg_pid(self):
 		return self.do_pygdb_ret("get_dbg_pid")
@@ -766,12 +799,43 @@ class PyGDB():
 			num_ret, ret_addr = None, None
 		self.hook_map[addr_v] = [num, handler, args, addr, ["OnEnter", num_ret, ret_addr]]
 		return 
+
+	def hook_mem_read(self, addr, handler, args = []):
+		return self.hook_mem(addr, handler, args, "rwatch")
+
+	def hook_mem_write(self, addr, handler, args = []):
+		return self.hook_mem(addr, handler, args, "watch")
+
+	def hook_mem_access(self, addr, handler, args = []):
+		return self.hook_mem(addr, handler, args, "awatch")
+
+	def hook_mem(self, addr, handler, args = [], w_type = "w"):
+		if addr in self.hook_map.keys():
+			self.remove_hook(addr)
+
+		if w_type.startswith("a"):
+			num, addr_v = self.awatch(addr)
+			w_type = "awatch"
+		elif w_type.startswith("r"):
+			num, addr_v = self.rwatch(addr)
+			w_type = "rwatch"
+		else:
+			w_type = "watch"
+			num, addr_v = self.watch(addr)
+		num_ret, ret_addr = None, None
+
+		self.hook_map[addr_v] = [num, handler, args, addr, ["OnMem", w_type]]
+		return 
 	
-	def resore_hook(self):
+	def restore_hook(self):
 		for addr in self.hook_map.keys():
 			[num, handler, args, addr, hook_info] = self.hook_map[addr_v]
-			num, addr_v = self.set_bp(addr)
-			self.hook_map[addr_v] = [num, handler, args, addr, hook_info]
+			if hook_info[0] != "OnMem":
+				num, addr_v = self.set_bp(addr)
+				self.hook_map[addr_v] = [num, handler, args, addr, hook_info]
+			else:
+				num, addr_v = self.set_mem_bp(addr, hook_info[1])
+				self.hook_map[addr_v] = [num, handler, args, addr, hook_info]				
 			return 
 
 	def clear_hook(self):
@@ -785,7 +849,7 @@ class PyGDB():
 		if addr in self.hook_map.keys():
 			num = self.hook_map[addr][0]
 			hook_info = self.hook_map[addr][-1]
-			if hook_info[1] is not None:
+			if hook_info[0] not in ["OnMem"] and hook_info[1] is not None:
 				self.del_bp(hook_info[1])
 				self.hook_map.pop(hook_info[2])
 
@@ -824,7 +888,7 @@ class PyGDB():
 	def Continue(self):
 		while True:
 			try:
-				self._continue()
+				msg = self._continue()
 				pc = self.get_reg("pc")
 				if pc in self.hook_map.keys():
 					num, handler, args, addr, hook_info = self.hook_map[pc]
@@ -832,6 +896,29 @@ class PyGDB():
 					if ret_v is not None and ret_v == False:
 						return pc
 				else:
+					#print("msg:", msg)
+					b_num = re.search("atchpoint \d+:", msg)
+					if b_num:
+						print("in watchpoint")
+						b_num = b_num.group().split()[1].strip(":")
+						fini_num = int(b_num)
+
+						addr_v = self.cut_str(msg, "atchpoint %d: *"%fini_num)
+						if "\n" in addr_v:
+							addr_v = addr_v.split("\n")[0]
+						if addr_v is not None:
+							addr_v = int(addr_v, 16)
+
+						if addr_v in self.hook_map.keys():
+							values = re.findall("alue = 0x[0-9a-fA-F]+\n", msg)
+							for idx in range(len(values)):
+								values[idx] = int(values[idx].split(" = ")[-1].strip(), 16)
+							num, handler, args, addr, hook_info = self.hook_map[addr_v]
+							ret_v = handler(self, values, *args)
+							if ret_v is not None and ret_v == False:
+								return pc
+							else:
+								continue
 					return pc
 			except KeyboardInterrupt:
 				print('[+] ' + 'Interrupted')
@@ -1840,7 +1927,7 @@ int main() {
 		ret_v = self.do_pygdb_ret("thread")
 		#print ret_v
 		b_num = self.cut_str(ret_v, "thread is ", " (")
-		if b_num :
+		if b_num:
 			b_num = b_num.group().split()[1]
 			thread_num = int(b_num)
 

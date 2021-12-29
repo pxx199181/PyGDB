@@ -211,6 +211,17 @@ def test_hook():
 
             rbp = pygdb.get_reg("rbp")
             val = pygdb.read_int(rbp - 4)
+
+            #rdi = pygdb.get_reg("rdi")
+            rdi = rbp-4
+            if pygdb.globals["only_once"] == False:
+                print("*"*0x20)
+                pygdb.globals["only_once"] = True
+                pygdb.hook_mem_read(rdi, hook_mem_1)
+                #pygdb.hook_mem_write(rdi, hook_mem_1)
+                #pygdb.hook_mem_access(rdi, hook_mem_1)
+                #pygdb.io.interactive()
+
             if val == 10:
                 return False
             else:
@@ -226,9 +237,15 @@ def test_hook():
             else:
                 pass
 
+    def hook_mem_1(pygdb, values):
+        print("-"*0x20)
+        print("values", [hex(c) for c in values])
+
     pygdb = PyGDB(target = "./test_hook")
     pygdb.hook(0x40054d, hook_test, [0, 0x40054d, "call printf",])
     pygdb.hook(0x400552, hook_out, [0, 0x400552, "cmp",])
+
+    pygdb.globals["only_once"] = False
 
     pygdb.start()
 
@@ -238,6 +255,15 @@ def test_hook():
 
     #also can use Continue
     pygdb.run_until(0x400562)
+
+    print(hex(pygdb.get_lib_func("printf", "libc")))
+    print(hex(pygdb.get_lib_func("puts")))
+
+    shellcode = ""
+    shellcode += asm(shellcraft.sh())
+
+
+    pygdb.make_tiny_elf(shellcode, "test.bin", base = 0x400000)
 
     pygdb.interact()
 
@@ -501,4 +527,9 @@ TODO
 - (2). modify chunk print(set HeapFilter fastbin/smallbin/unsortbin/largebin/tcache/top_lastreminder)
 - (3). modify hook function(search ret addr, OnEnter, OnRet)
 - (4). modify `gdb file` for more debug info
+
+## 2021/12/29 Version 1.0.0
+- (1). add hook_mem_read/hook_mem_write/hook_mem_access func
+- (2). add watch/awatch/rwatch func
+- (3). remove some bugs
 
