@@ -850,9 +850,9 @@ class PyGDB():
 			num = self.hook_map[addr][0]
 			hook_info = self.hook_map[addr][-1]
 			if hook_info[0] not in ["OnMem"] and hook_info[1] is not None:
-				self.del_bp(hook_info[1])
-				self.hook_map.pop(hook_info[2])
-
+				if hook_info[2] in self.hook_map.keys():
+					self.del_bp(hook_info[1])
+					self.hook_map.pop(hook_info[2])
 			self.del_bp(num)
 			self.hook_map.pop(addr)
 					
