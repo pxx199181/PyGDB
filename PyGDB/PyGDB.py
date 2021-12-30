@@ -1983,7 +1983,7 @@ int main() {
 		else:
 			self.io.interact()
 
-	def gdb_interact(self, break_list = [], gdbscript_pre = "", gdbscript_sub = "", init_file = ".self.init", terminal = None, sudo = True):
+	def gdb_interact(self, break_list = [], gdbscript_pre = "", gdbscript_suf = "", init_file = ".self.init", terminal = None, sudo = True):
 		pc = self.get_reg("pc")
 		#halt_code = self._asm_("jmp 0x%x"%pc, pc)
 		halt_code = self._asm_("jmp $", pc)
@@ -1998,7 +1998,7 @@ int main() {
 		init_script += "set *(unsigned long long *)0x%x=0x%x\n"%(pc, restore_value)
 		init_script += "context\n"
 		init_script += "\n".join(["b *0x%x"%c for c in break_list]) + "\n"
-		init_script += gdbscript_sub.strip()
+		init_script += gdbscript_suf.strip()
 		self.writefile(init_file, init_script)
 
 		self.detach()
