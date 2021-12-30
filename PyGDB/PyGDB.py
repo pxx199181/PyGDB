@@ -1975,9 +1975,15 @@ int main() {
 			target = self.get_target()
 			#print "target:", target
 			#self.interact()
-			self.do_gdb_ret(target)			
+			self.do_gdb_ret(target)	
 
-	def gdb_interact(self, break_list = [], gdbscript = "", init_file = ".self.init", terminal = None, sudo = True):
+	def interact_raw(self):
+		if io_wrapper == "pwntools":
+			self.io.interactive()
+		else:
+			self.io.interact()
+
+	def gdb_interact(self, break_list = [], gdbscript_pre = "", gdbscript_sub = "", init_file = ".self.init", terminal = None, sudo = True):
 		pc = self.get_reg("pc")
 		#halt_code = self._asm_("jmp 0x%x"%pc, pc)
 		halt_code = self._asm_("jmp $", pc)
@@ -1986,11 +1992,13 @@ int main() {
 		target = self.get_target()
 
 		init_script = ""
+		if gdbscript_pre != "":
+			init_script += gdbscript_pre.strip() += "\n"
 		init_script += target + "\n"
 		init_script += "set *(unsigned long long *)0x%x=0x%x\n"%(pc, restore_value)
 		init_script += "context\n"
 		init_script += "\n".join(["b *0x%x"%c for c in break_list]) + "\n"
-		init_script += gdbscript.strip()
+		init_script += gdbscript_sub.strip()
 		self.writefile(init_file, init_script)
 
 		self.detach()
