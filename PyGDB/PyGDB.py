@@ -1993,7 +1993,7 @@ int main() {
 
 		init_script = ""
 		if gdbscript_pre != "":
-			init_script += gdbscript_pre.strip() += "\n"
+			init_script += gdbscript_pre.strip() + "\n"
 		init_script += target + "\n"
 		init_script += "set *(unsigned long long *)0x%x=0x%x\n"%(pc, restore_value)
 		init_script += "context\n"
