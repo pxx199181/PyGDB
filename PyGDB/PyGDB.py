@@ -145,6 +145,9 @@ def PyGDB_writefile(filename, data, mode = "wb"):
 	with open(filename, mode) as fd:
 		return fd.write(data)
 
+def PyGDB_appendfile(filename, data, mode = "ab+"):
+	PyGDB_writefile(filename, data, mode)
+
 #https://www.muppetlabs.com/~breadbox/software/tiny/teensy.html
 def PyGDB_make_tiny_elf(shellcode, outfile = None, base = None, mode = 32):
 	if mode == 32:
@@ -494,6 +497,14 @@ class PyGDB():
 	def _continue(self):
 		#return self.do_pygdb_ret("continue")
 		return self.do_gdb_ret("continue")
+
+	def _stepi(self):
+		#return self.do_pygdb_ret("continue")
+		return self.do_gdb_ret("si")
+
+	def _stepo(self):
+		#return self.do_pygdb_ret("continue")
+		return self.do_gdb_ret("ni")
 
 	def get_dbg_pid(self):
 		return self.do_pygdb_ret("get_dbg_pid")
@@ -870,60 +881,87 @@ class PyGDB():
 					break
 
 	def run_until(self, addr, is_pie = False):
+		#print("run_until: 0x%x"%addr)
+		#self.interact()
 		addr = self.real_addr(addr, is_pie)
-
 		num, addr_v = self.set_bp(addr)
-		bps = self.get_bp()
-
-		#print "num", num, "addr_v", addr_v
-		while True:
-			pc = self.Continue()
-			if pc == -1:
-				break
-
-			if pc == addr_v:
-				self.del_bp(num)
-				break
-
-	def Continue(self):
 		while True:
 			try:
 				msg = self._continue()
-				pc = self.get_reg("pc")
-				if pc in self.hook_map.keys():
-					num, handler, args, addr, hook_info = self.hook_map[pc]
-					ret_v = handler(self, hook_info[0], *args)
-					if ret_v is not None and ret_v == False:
-						return pc
-				else:
-					#print("msg:", msg)
-					b_num = re.search("atchpoint \d+:", msg)
-					if b_num:
-						print("in watchpoint")
-						b_num = b_num.group().split()[1].strip(":")
-						fini_num = int(b_num)
-
-						addr_v = self.cut_str(msg, "atchpoint %d: *"%fini_num)
-						if "\n" in addr_v:
-							addr_v = addr_v.split("\n")[0]
-						if addr_v is not None:
-							addr_v = int(addr_v, 16)
-
-						if addr_v in self.hook_map.keys():
-							values = re.findall("alue = 0x[0-9a-fA-F]+\n", msg)
-							for idx in range(len(values)):
-								values[idx] = int(values[idx].split(" = ")[-1].strip(), 16)
-							num, handler, args, addr, hook_info = self.hook_map[addr_v]
-							ret_v = handler(self, values, *args)
-							if ret_v is not None and ret_v == False:
-								return pc
-							else:
-								continue
+				sign, pc = self.DealHook(msg)
+				#print("addr_v: 0x%x -> 0x%x"%(addr_v, pc))
+				if pc == addr_v:
+					self.del_bp(num)
 					return pc
 			except KeyboardInterrupt:
 				print('[+] ' + 'Interrupted')
 				self.interrupt_process()
 				return -1
+
+	def DealHook(self, msg):
+		pc = self.get_reg("pc")
+		if pc in self.hook_map.keys(): #breakpoint hook
+			num, handler, args, addr, hook_info = self.hook_map[pc]
+			ret_v = handler(self, hook_info[0], *args)
+			if ret_v is None or ret_v == True:
+				return True, pc
+		else:
+			#print("msg:", msg)
+			b_num = re.search("atchpoint \d+:", msg)
+			if b_num: #mem breakpoint hook
+				#print("in watchpoint")
+				b_num = b_num.group().split()[1].strip(":")
+				fini_num = int(b_num)
+
+				addr_v = self.cut_str(msg, "atchpoint %d: *"%fini_num)
+				if "\n" in addr_v:
+					addr_v = addr_v.split("\n")[0]
+				if addr_v is not None:
+					addr_v = int(addr_v, 16)
+
+				if addr_v in self.hook_map.keys():
+					values = re.findall("alue = 0x[0-9a-fA-F]+\n", msg)
+					for idx in range(len(values)):
+						values[idx] = int(values[idx].split(" = ")[-1].strip(), 16)
+					num, handler, args, addr, hook_info = self.hook_map[addr_v]
+					ret_v = handler(self, values, *args)
+					if ret_v is None or ret_v == True:
+						return True, pc
+			return False, pc
+
+
+	def Continue(self):
+		while True:
+			try:
+				msg = self._continue()
+				sign, pc = self.DealHook(msg)
+				if sign == False:
+					return pc
+			except KeyboardInterrupt:
+				print('[+] ' + 'Interrupted')
+				self.interrupt_process()
+				return -1
+
+	def StepI(self):
+		if True:
+			try:
+				msg = self.stepi()
+				sign, pc = self.DealHook(msg)
+				return pc
+			except KeyboardInterrupt:
+				print('[+] ' + 'Interrupted')
+				self.interrupt_process()
+				return -1
+
+	def StepO(self):
+		pc = self.get_reg("pc")
+		asmInfos = self.get_disasm(pc, 2)
+		if len(asmInfos) >= 2 and asmInfos[0][1].startswith("call"):
+			next_addr = asmInfos[1][0]
+			self.run_until(next_addr)
+		else:
+			msg = self.stepo()
+			sign, pc = self.DealHook(msg)
 
 	def hexdump(self, addr = 0, size = 0x10, show = True, width = 16, data = None):
 		if data is not None:
@@ -971,6 +1009,7 @@ class PyGDB():
 		old_data = self.read_mem(pc, len(shellcode))
 		self.write_mem(pc, shellcode)
 
+		#self.interact()
 		self.run_until(pc + len(shellcode))
 		self.write_mem(pc, old_data)
 		self.set_reg("pc", pc)
@@ -1006,6 +1045,9 @@ class PyGDB():
 
 	def writefile(self, filename, data, mode = "wb"):
 		return PyGDB_writefile(filename, data, mode)
+
+	def appendfile(self, filename, data, mode = "ab+"):
+		return PyGDB_appendfile(filename, data, mode)
 
 	def init_data_config(self, data_config):
 		"""
@@ -1186,8 +1228,11 @@ class PyGDB():
 		return ret_v
 
 	def get_symbol_value(self, name):
+		#self.interact()
 		data = self.do_gdb_ret("print %s"%name)
+		#print("print %s"%name)
 		#print "data:", data
+		#self.interact()
 		pos_b = data.find(" 0x")
 		if pos_b == -1:
 			return 0
@@ -1195,6 +1240,7 @@ class PyGDB():
 		real_addr = int(value, 16)
 		if real_addr == 0:
 			print("[!]", name, ":", hex(real_addr))
+		#self.interact()
 		return real_addr
 
 	def get_lib_symbol(self, name, lib_path = "libc"):
@@ -1924,12 +1970,11 @@ int main() {
 		thread_num = 0
 		addr_v = None
 
-		ret_v = self.do_pygdb_ret("thread")
+		ret_v = self.do_gdb_ret("thread")
 		#print ret_v
 		b_num = self.cut_str(ret_v, "thread is ", " (")
 		if b_num:
-			b_num = b_num.group().split()[1]
-			thread_num = int(b_num)
+			thread_num = int(b_num.strip())
 
 			addr_v = self.cut_str(ret_v, "(Thread ", " (")
 			if addr_v is not None:
@@ -1942,6 +1987,155 @@ int main() {
 		self.invoke_s(self.call, func, args, lib_path, use_addr)
 		#self.restore_context()
 	"""
+
+	def get_disasm(self, addr, length = 1, parse = True):
+		info = self.do_gdb_ret("x/%di 0x%x"%(length, addr)).strip()
+		ret_values = []
+		for line in info.split("\n"):
+			items = line.split(" 0x")
+			if len(items) < 1:
+				break
+			line = (" 0x".join(items[1:])).strip()
+			if parse == False:
+				line = line.split(" #")[0]
+			items = line.split(":\t")
+			#print(repr(items))
+			#print(items[0].replace("\t", " ").split(" ")[0])
+			addr = int(items[0].replace("\t", " ").split(" ")[0], 16)
+			info = ":\t".join(items[1:])
+			ret_values.append([addr, info.strip()])
+		return ret_values 
+
+	def get_backtrace(self, level = None):
+		#self.interact()
+		info = self.do_gdb_ret("bt")
+		addr_list = []
+		items = info.strip().split("\n")
+		if level is not None:
+			items = items[:level]
+		for item in items:
+			#self.interact()
+			if " in " in item:
+				#print("item:", item.split(" in ")[0].strip().replace("\t", " ").split("  "))
+				addr = item.split(" in ")[0].strip().replace("\t", " ").split(" ")[-1]
+				addr_list.append(int(addr, 16))
+			elif " at " in item:
+				addr_symbol = item.split(" at ")[0].strip().replace("\t", " ").split("  ")[1].split(" ")[0]
+				addr = self.get_symbol_value(addr_symbol)
+				addr_list.append(addr)
+			else:
+				addr_list.append(-1)
+		return addr_list
+
+	def skip_reason(self, skip_sign):
+		if skip_sign == 1:
+			return "handler"
+		elif skip_sign == 2:
+			return "record_maps"
+		elif skip_sign == 3:
+			return "addr_list"
+		else:
+			return "unkown_%d"%skip_sign
+
+	def trace(self, b_addr = None, e_addr = None, logPattern = "trace", record_maps = [], skip_list = [], byThread = False, asmCode = False, appendMode = False, is_pie = False, rec_base = 0x0, skip_loops = True, trace_handler = None):
+
+		if b_addr is not None:
+			b_addr = self.real_addr(b_addr, is_pie)
+		if e_addr is not None:
+			e_addr = self.real_addr(e_addr, is_pie)
+
+		pc = self.get_reg("pc")
+		print("0x%x -> 0x%x"%(b_addr, pc))
+		if b_addr is not None and pc != b_addr:
+			pc = self.run_until(b_addr)
+
+		suffix = ".log"
+		if logPattern.endswith(".log"):
+			suffix = ".log"
+			logPattern = logPattern[:-4]
+		elif logPattern.endswith(".txt"):
+			suffix = ".txt"
+			logPattern = logPattern[:-4]
+
+		logfile_list = []
+
+		end_status = False
+
+		print("----------------- trace start -----------------")
+		while True:
+			try:
+				info = "0x%x"%(pc-rec_base)
+				if asmCode:
+					info_items = self.get_disasm(pc, 1, False)
+					[addr, asmInfo] = info_items[0]
+					info += ": " + asmInfo
+				if byThread == True:
+					thread_id, _ = self.get_thread_id()
+					logfile = logPattern + "_%d"%thread_id + suffix
+				else:
+					logfile = logPattern + suffix
+				if appendMode == False:
+					if logfile not in logfile_list:
+						self.writefile(logfile, "")
+						logfile_list.append(logfile)
+
+				self.appendfile(logfile, info + "\n")
+
+				if (e_addr is not None and pc == e_addr) or end_status == True:
+					break
+
+				last_addr = pc
+				pc = self.StepI()
+
+				skip_sign = 0	
+				if trace_handler is not None:
+					sign = trace_handler(self, pc)
+					#print("sign:", sign)
+					if sign == "end":
+						end_status = True
+						continue
+					elif sign == "skip":
+						skip_sign = 1
+
+				if skip_sign == 0 and len(record_maps) > 0:
+					if type(record_maps[0]) != list:
+						record_maps = [record_maps]
+
+					skip_sign = 2
+					for items in record_maps:
+						if pc >= items[0] and pc <= items[1]:
+							skip_sign = 0
+							break
+
+				if skip_sign == 0 and len(skip_list) > 0:
+					if pc in skip_list:
+						skip_sign = 3
+
+				if skip_sign > 0:
+					next_addr = self.get_backtrace(2)[1]
+					skip_chains = " [0x%x -> 0x%x -> 0x%x]"%(last_addr, pc, next_addr)
+					content = "-- skip chains -> %s%s"%(self.skip_reason(skip_sign), skip_chains) + "\n"		
+					self.appendfile(logfile, content)
+					if next_addr == -1:
+						print("next_addr:", -1)
+						self.interact()
+					pc = self.run_until(next_addr)
+
+				if skip_loops == True and pc == last_addr:
+					info_items = self.get_disasm(pc, 2, False)
+					next_addr = info_items[1][0]
+					pc = self.run_until(next_addr)
+					if pc == last_addr:
+						self.interact()
+					continue	
+
+			except Exception as ex:
+				print('[+] ' + repr(ex))
+				self.interrupt_process()
+				self.interact()
+				break
+		print("----------------- trace end -----------------")
+
 
 	def get_target(self):
 		return self.target_argv

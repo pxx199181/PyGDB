@@ -267,6 +267,90 @@ def test_hook():
 
     pygdb.interact()
 
+
+def test_trace():
+    def hook_test(pygdb, bpType, id, addr, value):
+        if bpType == "OnEnter":
+            pc = pygdb.get_reg("pc")
+            print("pc:", hex(pc))
+            print("id--:", id)
+            print("addr:", hex(addr))
+            print("value:", value)
+
+    def hook_out(pygdb, bpType, id, addr, value):
+        if bpType == "OnEnter":
+            pc = pygdb.get_reg("pc")
+            print("pc:", hex(pc))
+            print("id--:", id)
+            print("addr:", hex(addr))
+            print("value:", value)
+
+            rbp = pygdb.get_reg("rbp")
+            val = pygdb.read_int(rbp - 4)
+
+            #rdi = pygdb.get_reg("rdi")
+            rdi = rbp-4
+            if pygdb.globals["only_once"] == False:
+                print("*"*0x20)
+                pygdb.globals["only_once"] = True
+                pygdb.hook_mem_read(rdi, hook_mem_1)
+                #pygdb.hook_mem_write(rdi, hook_mem_1)
+                #pygdb.hook_mem_access(rdi, hook_mem_1)
+                #pygdb.io.interactive()
+
+            if val == 10:
+                return False
+            else:
+                print("val:", val)
+
+            if val == 4:
+                pygdb.remove_hook(0x40054d)
+            else:
+                pass
+
+            if val == 5:
+                pygdb.remove_hook(0x400552)
+            else:
+                pass
+
+    def hook_mem_1(pygdb, values):
+        print("-"*0x20)
+        print("values", [hex(c) for c in values])
+
+    pygdb = PyGDB(target = "./test_hook")
+    #pygdb.hook(0x40054d, hook_test, [0, 0x40054d, "call printf",])
+    #pygdb.hook(0x400552, hook_out, [0, 0x400552, "cmp",])
+
+    pygdb.globals["only_once"] = False
+
+    #b_addr = pygdb.get_symbol_value("main")
+    #bp_num, _ = pygdb.set_bp(b_addr)
+    pygdb.start()
+
+    #pygdb.interact()
+
+    #pygdb.Continue()
+    #pygdb.clear_hook()
+    #pygdb.stepi()
+
+    #pygdb.del_bp(bp_num)
+
+    pygdb.globals["cmp_count"] = 0
+    def trace_handler(pygdb, addr):
+        #print(hex(addr))
+        asmInfo = pygdb.get_disasm(addr, 1)
+        if asmInfo[0][1].startswith("cmp"):
+            pygdb.globals["cmp_count"] += 1
+            if pygdb.globals["cmp_count"] == 25:
+                return "end"
+
+    b_addr = pygdb.get_reg("pc")
+    print("b_addr: " + hex(b_addr))
+    pygdb.trace(b_addr = b_addr, e_addr = 0x400562, logPattern = "trace_log", byThread = True, asmCode = True, record_maps = [0x400000, 0x500000], trace_handler = trace_handler)
+    #pygdb.Continue()
+    #pygdb.run_until(0x400562)
+    pygdb.interact()
+
 from pwn import *
 def test_mmap():
     pygdb = PyGDB(target = "./test_hook")
@@ -454,6 +538,8 @@ if __name__ == "__main__":
             test_patch()
         elif sys.argv[1] == "dup_io":
             test_dup_io()
+        elif sys.argv[1] == "trace":
+            test_trace()
 ```
 
 ### test x86/x64
@@ -532,4 +618,11 @@ TODO
 - (1). add hook_mem_read/hook_mem_write/hook_mem_access func
 - (2). add watch/awatch/rwatch func
 - (3). remove some bugs
+
+## 2022/4/1 Version 1.0.0
+- (1). add trace func
+- (2). modify Continue/run_until/get_disasm etc.
+- (3). modify thread_id func.
+- (4). remove some bugs
+- (5). add trace example
 
