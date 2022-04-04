@@ -2037,7 +2037,7 @@ int main() {
 		else:
 			return "unkown_%d"%skip_sign
 
-	def trace(self, b_addr = None, e_addr = None, logPattern = "trace", record_maps = [], skip_list = [], byThread = False, asmCode = False, appendMode = False, is_pie = False, rec_base = 0x0, skip_loops = True, trace_handler = None):
+	def trace(self, b_addr = None, e_addr = None, logPattern = "trace", record_maps = [], skip_list = [], byThread = False, asmCode = False, appendMode = False, is_pie = False, rec_base = 0x0, skip_loops = True, trace_handler = None, function_mode = False):
 
 		if b_addr is not None:
 			b_addr = self.real_addr(b_addr, is_pie)
@@ -2060,7 +2060,7 @@ int main() {
 		logfile_list = []
 
 		end_status = False
-
+		func_level = 0
 		print("----------------- trace start -----------------")
 		while True:
 			try:
@@ -2068,7 +2068,21 @@ int main() {
 				if asmCode:
 					info_items = self.get_disasm(pc, 1, False)
 					[addr, asmInfo] = info_items[0]
-					info += ": " + asmInfo
+					
+					if function_mode == True:
+						if asmInfo.startswith("call"):
+							info = "  "*func_level + info + ": " + asmInfo
+							func_level += 1
+						elif asmInfo.startswith("ret"):
+							info = "  "*func_level + info + ": " + asmInfo
+							func_level -= 1
+							if func_level < 0:
+								func_level = 0
+						else:
+							info = ""	
+					else:
+						info += ": " + asmInfo
+
 				if byThread == True:
 					thread_id, _ = self.get_thread_id()
 					logfile = logPattern + "_%d"%thread_id + suffix
@@ -2079,7 +2093,9 @@ int main() {
 						self.writefile(logfile, "")
 						logfile_list.append(logfile)
 
-				self.appendfile(logfile, info + "\n")
+				if len(info) != 0:
+					#print(info)
+					self.appendfile(logfile, info + "\n")
 
 				if (e_addr is not None and pc == e_addr) or end_status == True:
 					break
@@ -2113,9 +2129,15 @@ int main() {
 
 				if skip_sign > 0:
 					next_addr = self.get_backtrace(2)[1]
-					skip_chains = " [0x%x -> 0x%x -> 0x%x]"%(last_addr, pc, next_addr)
-					content = "-- skip chains -> %s%s"%(self.skip_reason(skip_sign), skip_chains) + "\n"		
-					self.appendfile(logfile, content)
+
+					if function_mode:
+						func_level -= 1
+						if func_level < 0:
+							func_level = 0
+					else:
+						skip_chains = " [0x%x -> 0x%x -> 0x%x]"%(last_addr, pc, next_addr)
+						self.appendfile(logfile, "-- skip chains -> %s%s"%(self.skip_reason(skip_sign), skip_chains) + "\n")	
+						
 					if next_addr == -1:
 						print("next_addr:", -1)
 						self.interact()

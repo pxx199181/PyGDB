@@ -191,8 +191,8 @@ def test_trace():
 		print("values", [hex(c) for c in values])
 
 	pygdb = PyGDB(target = "./test_hook")
-	#pygdb.hook(0x40054d, hook_test, [0, 0x40054d, "call printf",])
-	#pygdb.hook(0x400552, hook_out, [0, 0x400552, "cmp",])
+	pygdb.hook(0x40054d, hook_test, [0, 0x40054d, "call printf",])
+	pygdb.hook(0x400552, hook_out, [0, 0x400552, "cmp",])
 
 	pygdb.globals["only_once"] = False
 
@@ -219,7 +219,9 @@ def test_trace():
 
 	b_addr = pygdb.get_reg("pc")
 	print("b_addr: " + hex(b_addr))
-	pygdb.trace(b_addr = b_addr, e_addr = 0x400562, logPattern = "trace_log", byThread = True, asmCode = True, record_maps = [0x400000, 0x500000], trace_handler = trace_handler)
+	function_mode = True
+	function_mode = False
+	pygdb.trace(b_addr = b_addr, e_addr = 0x400562, logPattern = "trace_log", byThread = True, asmCode = True, record_maps = [0x400000, 0x500000], trace_handler = trace_handler, function_mode = function_mode)
 	#pygdb.Continue()
 	#pygdb.run_until(0x400562)
 	pygdb.interact()
