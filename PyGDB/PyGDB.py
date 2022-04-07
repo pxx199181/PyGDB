@@ -460,6 +460,37 @@ class PyGDB():
 	def rwatch(self, addr):
 		return self.set_mem_bp(addr, "rwatch")
 
+	def set_catch_bp(self, name, catch_type = "syscall"):
+		if type(name) is not str:
+			name = str(name)
+		else:
+			name = name
+
+		ret_v = self.do_gdb_ret("catch %s %s"%(catch_type, name))
+		#print ret_v
+		b_num = re.search("atchpoint \d+ \(", ret_v)
+		if b_num:
+			b_num = b_num.group().split()[1]
+			fini_num = int(b_num)
+			return fini_num, "catch_%d"%fini_num
+		return None, None
+
+	#read / write / open / etc. / 1
+	def catch_syscall(self, info):
+		return self.set_catch_bp(info, "syscall")
+
+	#SIGTRAP / SIGINT / all / etc. / 1
+	def catch_signal(self, info = "all"):
+		return self.set_catch_bp(info, "signal")
+
+	#libc / etc. / 1
+	def catch_load(self, regex_str):
+		return self.set_catch_bp(regex_str, "load")
+
+	#libc / etc. / 1
+	def catch_unload(self, regex_str):
+		return self.set_catch_bp(regex_str, "unload")
+
 	def get_code(self, pc = None, count = None):
 		cmdline = ""
 		if pc is not None:
@@ -809,7 +840,7 @@ class PyGDB():
 		else:
 			num_ret, ret_addr = None, None
 		self.hook_map[addr_v] = [num, handler, args, addr, ["OnEnter", num_ret, ret_addr]]
-		return 
+		return addr_v
 
 	def hook_mem_read(self, addr, handler, args = []):
 		return self.hook_mem(addr, handler, args, "rwatch")
@@ -836,16 +867,55 @@ class PyGDB():
 		num_ret, ret_addr = None, None
 
 		self.hook_map[addr_v] = [num, handler, args, addr, ["OnMem", w_type]]
-		return 
+		return addr_v
+
+	def hook_catch_syscall(self, info, handler, args = []):
+		return self.hook_catch(info, handler, args, catch_type = "syscall")
+
+	def hook_catch_signal(self, info, handler, args = []):
+		return self.hook_catch(info, handler, args, catch_type = "signal")
+
+	def hook_catch_load(self, info, handler, args = []):
+		return self.hook_catch(info, handler, args, catch_type = "load")
+
+	def hook_catch_unload(self, info, handler, args = []):
+		return self.hook_catch(info, handler, args, catch_type = "unload")
+
+	def hook_catch(self, info, handler, args = [], catch_type = "syscall"):
+
+		if catch_type.startswith("sys"):
+			num, addr_v = self.catch_syscall(info)
+			catch_type = "syscall"
+		elif catch_type.startswith("sig"):
+			num, addr_v = self.catch_signal(info)
+			catch_type = "signal"
+		elif catch_type.startswith("loa"):
+			num, addr_v = self.catch_load(info)
+			catch_type = "load"
+		elif catch_type.startswith("unl"):
+			num, addr_v = self.catch_unload(info)
+			catch_type = "unload"
+		else:
+			num, addr_v = self.catch_syscall(info)
+			catch_type = "syscall"
+		if num is not None:
+			self.hook_map[addr_v] = [num, handler, args, info, ["OnCatch", catch_type]]
+		else:
+			addr_v = "error"
+		return addr_v
+
 	
 	def restore_hook(self):
 		for addr in self.hook_map.keys():
 			[num, handler, args, addr, hook_info] = self.hook_map[addr_v]
-			if hook_info[0] != "OnMem":
+			if hook_info[0] not in ["OnMem", "OnCatch"]:
 				num, addr_v = self.set_bp(addr)
 				self.hook_map[addr_v] = [num, handler, args, addr, hook_info]
-			else:
+			elif hook_info[0] == "OnMem":
 				num, addr_v = self.set_mem_bp(addr, hook_info[1])
+				self.hook_map[addr_v] = [num, handler, args, addr, hook_info]	
+			elif hook_info[0] == "OnCatch":
+				num, addr_v = self.set_catch_bp(addr, hook_info[1])
 				self.hook_map[addr_v] = [num, handler, args, addr, hook_info]				
 			return 
 
@@ -860,7 +930,7 @@ class PyGDB():
 		if addr in self.hook_map.keys():
 			num = self.hook_map[addr][0]
 			hook_info = self.hook_map[addr][-1]
-			if hook_info[0] not in ["OnMem"] and hook_info[1] is not None:
+			if hook_info[0] not in ["OnMem", "OnCatch"] and hook_info[1] is not None:
 				if hook_info[2] in self.hook_map.keys():
 					self.del_bp(hook_info[1])
 					self.hook_map.pop(hook_info[2])
@@ -927,6 +997,42 @@ class PyGDB():
 					ret_v = handler(self, values, *args)
 					if ret_v is None or ret_v == True:
 						return True, pc
+			else:
+				b_num = re.search("atchpoint \d+", msg)
+				#print("-"*0x10)
+				#print(repr(msg))
+				#print(b_num)
+				#print("-"*0x10)
+				if b_num:
+					b_num = b_num.group().split()[1].strip()
+					#print("b_num:", b_num)
+					fini_num = int(b_num)
+					addr_v = "catch_%d"%fini_num
+
+					if addr_v in self.hook_map.keys():
+						num, handler, args, addr, hook_info = self.hook_map[addr_v]
+
+						#values = re.findall("alue = 0x[0-9a-fA-F]+\n", msg)
+						catch_type = hook_info[1]
+						info = "unkown"
+						if catch_type in ["syscall"]:
+							#infos = re.findall("\(* syscall *\)", msg)
+							info_use = self.cut_str(msg, " (", " syscall ")
+							if "call to" in info_use:
+								info = "OnEnter"
+							elif "returned from" in info_use:
+								info = "OnRet"
+						elif catch_type in ["load", "unload"]:
+							info_use = self.cut_str(msg, "loaded ", "\n")
+							if info_use != "":
+								info = info_use.split("loaded ")[-1].strip()
+						elif catch_type in ["signal"]:
+							info_use = self.cut_str(msg, "(signal ", ")")
+							if info_use != "":
+								info = info_use.strip()
+						ret_v = handler(self, info, *args)
+						if ret_v is None or ret_v == True:
+							return True, pc
 			return False, pc
 
 

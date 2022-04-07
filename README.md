@@ -11,6 +11,8 @@
         - test mmap
         - test patch
         - test dup_io
+        - test trace
+        - test catch
     - More
 - Documention
 - Update log
@@ -128,418 +130,465 @@ test script
 from PyGDB import PyGDB
 
 def test_intel():
-    pygdb = PyGDB(target = "./test_x86")
-    print(pygdb.set_bp(0x804861C))
-    pygdb.start()
-    print(pygdb.get_code(20))
+	pygdb = PyGDB(target = "./test_x86")
+	print(pygdb.set_bp(0x804861C))
+	pygdb.start()
+	print(pygdb.get_code(20))
 
-    print(pygdb.hexdump(0x804861C, 0x21))
-    print(pygdb.get_code(0x804861C, 20))
-    #pygdb.attach("127.0.0.1:4444")
-    print(pygdb.get_regs())
-    print(pygdb.get_code())
-    print(pygdb.get_stack())
-    #pygdb.interact()
-    print(pygdb.set_reg("eax", 0xdeadbeef))
-    print(pygdb.stepi())
-    print(pygdb.get_regs())
-    print(pygdb.get_code())
-    print(pygdb.get_stack())
-    print("pyCmdRet read_mem 0x8048621 0x14")
-    data = pygdb.get_mem(0x8048621, 20)
-    #print("data:", data)
-    for v in data:
-        print(ord(v), type(v))
+	print(pygdb.hexdump(0x804861C, 0x21))
+	print(pygdb.get_code(0x804861C, 20))
+	#pygdb.attach("127.0.0.1:4444")
+	print(pygdb.get_regs())
+	print(pygdb.get_code())
+	print(pygdb.get_stack())
+	#pygdb.interact()
+	print(pygdb.set_reg("eax", 0xdeadbeef))
+	print(pygdb.stepi())
+	print(pygdb.get_regs())
+	print(pygdb.get_code())
+	print(pygdb.get_stack())
+	print("pyCmdRet read_mem 0x8048621 0x14")
+	data = pygdb.get_mem(0x8048621, 20)
+	#print("data:", data)
+	for v in data:
+		print(ord(v), type(v))
 
-    print(pygdb.set_mem(0x8048621, "\x01"*0x10))
-    data = pygdb.get_mem(0x8048621, 20)
-    print("data:", data)
+	print(pygdb.set_mem(0x8048621, "\x01"*0x10))
+	data = pygdb.get_mem(0x8048621, 20)
+	print("data:", data)
 
-    print(pygdb.get_code(20))
-    pygdb.interact()
+	print(pygdb.get_code(20))
+	pygdb.interact()
 
 
 def test_arm():
-    pygdb = PyGDB(target = "./test_arm")
-    pygdb.attach("127.0.0.1:4444")
-    print(pygdb.set_bp(0x10474)) #jmp start_main
-    print(pygdb.get_bp())
-    print(pygdb.get_code(20))
-    pygdb.Continue()
-    print(pygdb.get_regs())
-    print(pygdb.get_code())
-    print(pygdb.get_stack())
-    print(pygdb.stepi())
-    print(pygdb.get_regs())
-    print(pygdb.get_code())
-    print(pygdb.get_stack())
-    print("pyCmdRet read_mem 0x10630 0x14")
+	pygdb = PyGDB(target = "./test_arm")
+	pygdb.attach("127.0.0.1:4444")
+	print(pygdb.set_bp(0x10474)) #jmp start_main
+	print(pygdb.get_bp())
+	print(pygdb.get_code(20))
+	pygdb.Continue()
+	print(pygdb.get_regs())
+	print(pygdb.get_code())
+	print(pygdb.get_stack())
+	print(pygdb.stepi())
+	print(pygdb.get_regs())
+	print(pygdb.get_code())
+	print(pygdb.get_stack())
+	print("pyCmdRet read_mem 0x10630 0x14")
 
-    sp = pygdb.get_reg("sp")
-    print("sp:", hex(sp))
-    data = pygdb.get_mem(sp, 20)
-    #print("data:", data)
-    for v in data:
-        print(ord(v), type(v))
+	sp = pygdb.get_reg("sp")
+	print("sp:", hex(sp))
+	data = pygdb.get_mem(sp, 20)
+	#print("data:", data)
+	for v in data:
+		print(ord(v), type(v))
 
-    print(pygdb.set_mem(sp, "\x01"*0x20))
-    print(pygdb.set_reg("r0", 0xdeadbeef))
-    data = pygdb.get_mem(sp, 20)
-    print("data:", data)
-    print(pygdb.hexdump(sp, 20))
+	print(pygdb.set_mem(sp, "\x01"*0x20))
+	print(pygdb.set_reg("r0", 0xdeadbeef))
+	data = pygdb.get_mem(sp, 20)
+	print("data:", data)
+	print(pygdb.hexdump(sp, 20))
 
-    print(pygdb.get_code(20))
-    print(pygdb.get_stack(20))
-    pygdb.interact()
+	print(pygdb.get_code(20))
+	print(pygdb.get_stack(20))
+	pygdb.interact()
 
 def test_hook():
-    def hook_test(pygdb, bpType, id, addr, value):
-        if bpType == "OnEnter":
-            pc = pygdb.get_reg("pc")
-            print("pc:", hex(pc))
-            print("id--:", id)
-            print("addr:", hex(addr))
-            print("value:", value)
+	def hook_test(pygdb, bpType, id, addr, value):
+		if bpType == "OnEnter":
+			pc = pygdb.get_reg("pc")
+			print("pc:", hex(pc))
+			print("id--:", id)
+			print("addr:", hex(addr))
+			print("value:", value)
 
-    def hook_out(pygdb, bpType, id, addr, value):
-        if bpType == "OnEnter":
-            pc = pygdb.get_reg("pc")
-            print("pc:", hex(pc))
-            print("id--:", id)
-            print("addr:", hex(addr))
-            print("value:", value)
+	def hook_out(pygdb, bpType, id, addr, value):
+		if bpType == "OnEnter":
+			pc = pygdb.get_reg("pc")
+			print("pc:", hex(pc))
+			print("id--:", id)
+			print("addr:", hex(addr))
+			print("value:", value)
 
-            rbp = pygdb.get_reg("rbp")
-            val = pygdb.read_int(rbp - 4)
+			rbp = pygdb.get_reg("rbp")
+			val = pygdb.read_int(rbp - 4)
 
-            #rdi = pygdb.get_reg("rdi")
-            rdi = rbp-4
-            if pygdb.globals["only_once"] == False:
-                print("*"*0x20)
-                pygdb.globals["only_once"] = True
-                pygdb.hook_mem_read(rdi, hook_mem_1)
-                #pygdb.hook_mem_write(rdi, hook_mem_1)
-                #pygdb.hook_mem_access(rdi, hook_mem_1)
-                #pygdb.io.interactive()
+			#rdi = pygdb.get_reg("rdi")
+			rdi = rbp-4
+			if pygdb.globals["only_once"] == False:
+				print("*"*0x20)
+				pygdb.globals["only_once"] = True
+				pygdb.hook_mem_read(rdi, hook_mem_1)
+				#pygdb.hook_mem_write(rdi, hook_mem_1)
+				#pygdb.hook_mem_access(rdi, hook_mem_1)
+				#pygdb.io.interactive()
 
-            if val == 10:
-                return False
-            else:
-                print("val:", val)
+			if val == 10:
+				return False
+			else:
+				print("val:", val)
 
-            if val == 4:
-                pygdb.remove_hook(0x40054d)
-            else:
-                pass
+			if val == 4:
+				pygdb.remove_hook(0x40054d)
+			else:
+				pass
 
-            if val == 5:
-                pygdb.remove_hook(0x400552)
-            else:
-                pass
+			if val == 5:
+				pygdb.remove_hook(0x400552)
+			else:
+				pass
 
-    def hook_mem_1(pygdb, values):
-        print("-"*0x20)
-        print("values", [hex(c) for c in values])
+	def hook_mem_1(pygdb, values):
+		print("-"*0x20)
+		print("values", [hex(c) for c in values])
 
-    pygdb = PyGDB(target = "./test_hook")
-    pygdb.hook(0x40054d, hook_test, [0, 0x40054d, "call printf",])
-    pygdb.hook(0x400552, hook_out, [0, 0x400552, "cmp",])
+	pygdb = PyGDB(target = "./test_hook")
+	pygdb.hook(0x40054d, hook_test, [0, 0x40054d, "call printf",])
+	pygdb.hook(0x400552, hook_out, [0, 0x400552, "cmp",])
 
-    pygdb.globals["only_once"] = False
+	pygdb.globals["only_once"] = False
 
-    pygdb.start()
+	pygdb.start()
 
-    #pygdb.Continue()
-    #pygdb.clear_hook()
-    #pygdb.stepi()
+	#pygdb.Continue()
+	#pygdb.clear_hook()
+	#pygdb.stepi()
 
-    #also can use Continue
-    pygdb.run_until(0x400562)
+	#also can use Continue
+	pygdb.run_until(0x400562)
 
-    print(hex(pygdb.get_lib_func("printf", "libc")))
-    print(hex(pygdb.get_lib_func("puts")))
+	print(hex(pygdb.get_lib_func("printf", "libc")))
+	print(hex(pygdb.get_lib_func("puts")))
 
-    shellcode = ""
-    shellcode += asm(shellcraft.sh())
+	shellcode = ""
+	shellcode += asm(shellcraft.sh())
 
 
-    pygdb.make_tiny_elf(shellcode, "test.bin", base = 0x400000)
+	pygdb.make_tiny_elf(shellcode, "test.bin", base = 0x400000)
 
-    pygdb.interact()
+	pygdb.interact()
 
 
 def test_trace():
-    def hook_test(pygdb, bpType, id, addr, value):
-        if bpType == "OnEnter":
-            pc = pygdb.get_reg("pc")
-            print("pc:", hex(pc))
-            print("id--:", id)
-            print("addr:", hex(addr))
-            print("value:", value)
+	def hook_test(pygdb, bpType, id, addr, value):
+		if bpType == "OnEnter":
+			pc = pygdb.get_reg("pc")
+			print("pc:", hex(pc))
+			print("id--:", id)
+			print("addr:", hex(addr))
+			print("value:", value)
 
-    def hook_out(pygdb, bpType, id, addr, value):
-        if bpType == "OnEnter":
-            pc = pygdb.get_reg("pc")
-            print("pc:", hex(pc))
-            print("id--:", id)
-            print("addr:", hex(addr))
-            print("value:", value)
+	def hook_out(pygdb, bpType, id, addr, value):
+		if bpType == "OnEnter":
+			pc = pygdb.get_reg("pc")
+			print("pc:", hex(pc))
+			print("id--:", id)
+			print("addr:", hex(addr))
+			print("value:", value)
 
-            rbp = pygdb.get_reg("rbp")
-            val = pygdb.read_int(rbp - 4)
+			rbp = pygdb.get_reg("rbp")
+			val = pygdb.read_int(rbp - 4)
 
-            #rdi = pygdb.get_reg("rdi")
-            rdi = rbp-4
-            if pygdb.globals["only_once"] == False:
-                print("*"*0x20)
-                pygdb.globals["only_once"] = True
-                pygdb.hook_mem_read(rdi, hook_mem_1)
-                #pygdb.hook_mem_write(rdi, hook_mem_1)
-                #pygdb.hook_mem_access(rdi, hook_mem_1)
-                #pygdb.io.interactive()
+			#rdi = pygdb.get_reg("rdi")
+			rdi = rbp-4
+			if pygdb.globals["only_once"] == False:
+				print("*"*0x20)
+				pygdb.globals["only_once"] = True
+				pygdb.hook_mem_read(rdi, hook_mem_1)
+				#pygdb.hook_mem_write(rdi, hook_mem_1)
+				#pygdb.hook_mem_access(rdi, hook_mem_1)
+				#pygdb.io.interactive()
 
-            if val == 10:
-                return False
-            else:
-                print("val:", val)
+			if val == 10:
+				return False
+			else:
+				print("val:", val)
 
-            if val == 4:
-                pygdb.remove_hook(0x40054d)
-            else:
-                pass
+			if val == 4:
+				pygdb.remove_hook(0x40054d)
+			else:
+				pass
 
-            if val == 5:
-                pygdb.remove_hook(0x400552)
-            else:
-                pass
+			if val == 5:
+				pygdb.remove_hook(0x400552)
+			else:
+				pass
 
-    def hook_mem_1(pygdb, values):
-        print("-"*0x20)
-        print("values", [hex(c) for c in values])
+	def hook_mem_1(pygdb, values):
+		print("-"*0x20)
+		print("values", [hex(c) for c in values])
 
-    pygdb = PyGDB(target = "./test_hook")
-    #pygdb.hook(0x40054d, hook_test, [0, 0x40054d, "call printf",])
-    #pygdb.hook(0x400552, hook_out, [0, 0x400552, "cmp",])
+	pygdb = PyGDB(target = "./test_hook")
+	pygdb.hook(0x40054d, hook_test, [0, 0x40054d, "call printf",])
+	pygdb.hook(0x400552, hook_out, [0, 0x400552, "cmp",])
 
-    pygdb.globals["only_once"] = False
+	pygdb.globals["only_once"] = False
 
-    #b_addr = pygdb.get_symbol_value("main")
-    #bp_num, _ = pygdb.set_bp(b_addr)
-    pygdb.start()
+	#b_addr = pygdb.get_symbol_value("main")
+	#bp_num, _ = pygdb.set_bp(b_addr)
+	pygdb.start()
 
-    #pygdb.interact()
+	#pygdb.interact()
 
-    #pygdb.Continue()
-    #pygdb.clear_hook()
-    #pygdb.stepi()
+	#pygdb.Continue()
+	#pygdb.clear_hook()
+	#pygdb.stepi()
 
-    #pygdb.del_bp(bp_num)
+	#pygdb.del_bp(bp_num)
 
-    pygdb.globals["cmp_count"] = 0
-    def trace_handler(pygdb, addr):
-        #print(hex(addr))
-        asmInfo = pygdb.get_disasm(addr, 1)
-        if asmInfo[0][1].startswith("cmp"):
-            pygdb.globals["cmp_count"] += 1
-            if pygdb.globals["cmp_count"] == 25:
-                return "end"
+	pygdb.globals["cmp_count"] = 0
+	def trace_handler(pygdb, addr):
+		#print(hex(addr))
+		asmInfo = pygdb.get_disasm(addr, 1)
+		if asmInfo[0][1].startswith("cmp"):
+			pygdb.globals["cmp_count"] += 1
+			if pygdb.globals["cmp_count"] == 25:
+				return "end"
 
-    b_addr = pygdb.get_reg("pc")
-    print("b_addr: " + hex(b_addr))
-    pygdb.trace(b_addr = b_addr, e_addr = 0x400562, logPattern = "trace_log", byThread = True, asmCode = True, record_maps = [0x400000, 0x500000], trace_handler = trace_handler)
-    #pygdb.Continue()
-    #pygdb.run_until(0x400562)
-    pygdb.interact()
+	b_addr = pygdb.get_reg("pc")
+	print("b_addr: " + hex(b_addr))
+	function_mode = True
+	function_mode = False
+	pygdb.trace(b_addr = b_addr, e_addr = 0x400562, logPattern = "trace_log", byThread = True, asmCode = True, record_maps = [0x400000, 0x500000], trace_handler = trace_handler, function_mode = function_mode)
+	#pygdb.Continue()
+	#pygdb.run_until(0x400562)
+	pygdb.interact()
+
+
+def test_catch():
+	def hook_syscall(pygdb, bpType, syscall_name):
+		if bpType == "OnEnter":
+			pc = pygdb.get_reg("pc")
+			print(hex(pc), "enter", syscall_name)
+			if syscall_name == "open":
+				rdi = pygdb.get_reg("rdi")
+				name = pygdb.readString(rdi)
+				print("open", name)
+			elif syscall_name == "read":
+				rdx = pygdb.get_reg("rdx")
+				print("read size", hex(rdx))
+		elif bpType == "OnRet":
+			pc = pygdb.get_reg("pc")
+			print(hex(pc), "return", syscall_name)
+
+	def hook_image(pygdb, libname, t_type):
+		print("-"*0x20)
+		print(t_type, libname)
+
+	def hook_signal(pygdb, info):
+		print("-"*0x20)
+		print("signal", info)
+
+	pygdb = PyGDB(target = "./test_hook")
+	pygdb.hook_catch_syscall("open", hook_syscall, ["open"])
+	addr_v = pygdb.hook_catch_syscall("read", hook_syscall, ["read"])
+
+	pygdb.hook_catch_load("", hook_image, ["load"])
+	pygdb.hook_catch_unload("", hook_image, ["unload"])
+
+	pygdb.hook_catch_signal("all", hook_signal, [])
+
+	pygdb.start()
+	pygdb.globals["cmp_count"] = 0
+
+	pygdb.run_until(0x400562)
+	pygdb.remove_hook(addr_v)
+	print(pygdb.hook_map.keys())
+
+	pygdb.interact()
 
 from pwn import *
 def test_mmap():
-    pygdb = PyGDB(target = "./test_hook")
-    #pygdb.
-    bp_id, bp_addr = pygdb.set_bp("main")
-    #pygdb.interact()
-    pygdb.start()
-    pygdb.del_bp(bp_id)
-    #print(pygdb.get_code(20))
-    #exit(0)
+	pygdb = PyGDB(target = "./test_hook")
+	#pygdb.
+	bp_id, bp_addr = pygdb.set_bp("main")
+	#pygdb.interact()
+	pygdb.start()
+	pygdb.del_bp(bp_id)
+	#print(pygdb.get_code(20))
+	#exit(0)
 
-    context(arch = pygdb.arch, os = 'linux')
-        
-    open_code = pygdb.gen_inject_asm(shellcraft.open("rdi", "rsi", "rdx"))
-    close_code = pygdb.gen_inject_asm(shellcraft.close("rdi"))
-    filename = pygdb.gen_stack_value("filename", "./test\x00")
-    endl = pygdb.gen_stack_value("endl", "\n\x00")
-    c_source = """
-    int write_diy(int fd, char* data, int size);
-    int open_diy(char *filename, int md, int flag);
-    int strlen_diy(char *data);
-    void close_diy(int fd);
-    gen_from_pwntools(int write(int fd, char* data, int size));
-    gen_from_pwntools(int open(char* filename, int mode, int flag));
-    int upper_str(char *data, char val) {
-        char filename[10];
-        %s
-        char endl[16];
-        %s
-        int len = strlen_diy(data);
-        //int fd = open(filename, 0666);
-        int fd = open(filename, 0x42, 0755);
-        write(fd, data, len);
-        for(int i = 0; i < len; i++)
-            if (data[i] > 0x20 && data[i] < 0x80) {
-                data[i] |= val;
-                data[i] -= 0x20;
-            }
-        write_diy(fd, endl, 1);
-        write_diy(fd, data, len);
-        close_diy(fd);
-        return len;
-    }
-    int print(void *data) {
-        return write_diy(1, data, strlen_diy(data));
-    }
-    int write_diy(int fd, char* data, int size) {
-        __asm__(
-        "mov $0x1, %%eax\\t\\n"
-        "syscall\\t\\n"
-        );
-    }
-    void close_diy(int fd) {
-        %s
-    }
-    int strlen_diy(char *data) {
-        int i;
-        for(i = 0; ; i++)
-            if (data[i] == 0) 
-                return i;
-    }
-    """%(filename, endl, close_code)
+	context(arch = pygdb.arch, os = 'linux')
+		
+	open_code = pygdb.gen_inject_asm(shellcraft.open("rdi", "rsi", "rdx"))
+	close_code = pygdb.gen_inject_asm(shellcraft.close("rdi"))
+	filename = pygdb.gen_stack_value("filename", "./test\x00")
+	endl = pygdb.gen_stack_value("endl", "\n\x00")
+	c_source = """
+	int write_diy(int fd, char* data, int size);
+	int open_diy(char *filename, int md, int flag);
+	int strlen_diy(char *data);
+	void close_diy(int fd);
+	gen_from_pwntools(int write(int fd, char* data, int size));
+	gen_from_pwntools(int open(char* filename, int mode, int flag));
+	int upper_str(char *data, char val) {
+		char filename[10];
+		%s
+		char endl[16];
+		%s
+		int len = strlen_diy(data);
+		//int fd = open(filename, 0666);
+		int fd = open(filename, 0x42, 0755);
+		write(fd, data, len);
+		for(int i = 0; i < len; i++)
+			if (data[i] > 0x20 && data[i] < 0x80) {
+				data[i] |= val;
+				data[i] -= 0x20;
+			}
+		write_diy(fd, endl, 1);
+		write_diy(fd, data, len);
+		close_diy(fd);
+		return len;
+	}
+	int print(void *data) {
+		return write_diy(1, data, strlen_diy(data));
+	}
+	int write_diy(int fd, char* data, int size) {
+		__asm__(
+		"mov $0x1, %%eax\\t\\n"
+		"syscall\\t\\n"
+		);
+	}
+	void close_diy(int fd) {
+		%s
+	}
+	int strlen_diy(char *data) {
+		int i;
+		for(i = 0; ; i++)
+			if (data[i] == 0) 
+				return i;
+	}
+	"""%(filename, endl, close_code)
 
-    code_data = pygdb.gen_payload(c_source, "upper_str")#, obj_name = "uuu_obj")
-    code_addr = 0x8304000
-    data_addr = 0x8300000
-    #print data.encode("hex")
+	code_data = pygdb.gen_payload(c_source, "upper_str")#, obj_name = "uuu_obj")
+	code_addr = 0x8304000
+	data_addr = 0x8300000
+	#print data.encode("hex")
 
 
-    map_config = {
-        data_addr:[0x1000, "rw"],
-        code_addr:[0x2000, "wx"],
-    }
-    data_config = {
-        data_addr:"welcome to use PyGDB", 
-        code_addr:code_data, 
-    }
+	map_config = {
+		data_addr:[0x1000, "rw"],
+		code_addr:[0x2000, "wx"],
+	}
+	data_config = {
+		data_addr:"welcome to use PyGDB", 
+		code_addr:code_data, 
+	}
 
-    pygdb.init_map_config(map_config)
-    pygdb.init_data_config(data_config)
+	pygdb.init_map_config(map_config)
+	pygdb.init_data_config(data_config)
 
-    args = [data_addr, 0x20]
+	args = [data_addr, 0x20]
 
-    code_asm = pygdb.get_code(code_addr, 0x100)
-    print "code_asm:"
-    print code_asm
-    code_asm = pygdb.get_code(0x830417e, 0x50)
-    print "code_asm:"
-    print code_asm
-    
-    def hook_count(pygdb, bpType, id, addr, value):
-        #rdi = pygdb.
-        if bpType == "OnEnter":
-            pygdb.globals["count"] += 1
-            if pygdb.globals["count"] > 5:
-                pygdb.remove_hook(addr)
-                del pygdb.globals["count"]
-                return
-            print "count", pygdb.globals["count"]
+	code_asm = pygdb.get_code(code_addr, 0x100)
+	print "code_asm:"
+	print code_asm
+	code_asm = pygdb.get_code(0x830417e, 0x50)
+	print "code_asm:"
+	print code_asm
+	
+	def hook_count(pygdb, bpType, id, addr, value):
+		#rdi = pygdb.
+		if bpType == "OnEnter":
+			pygdb.globals["count"] += 1
+			if pygdb.globals["count"] > 5:
+				pygdb.remove_hook(addr)
+				del pygdb.globals["count"]
+				return
+			print "count", pygdb.globals["count"]
 
-    pygdb.globals["count"] = 0
-    #pygdb.hook(0x8304029, hook_count, [pygdb, 0, 0x8304029, "call 0x8304029",])
+	pygdb.globals["count"] = 0
+	#pygdb.hook(0x8304029, hook_count, [pygdb, 0, 0x8304029, "call 0x8304029",])
 
-    #pygdb.set_bp(code_addr)
-    ret_v = pygdb.call(code_addr, args)
-    print "ret_v:", repr(ret_v), type(ret_v)
-    print pygdb.globals
+	#pygdb.set_bp(code_addr)
+	ret_v = pygdb.call(code_addr, args)
+	print "ret_v:", repr(ret_v), type(ret_v)
+	print pygdb.globals
 
-    str_info = pygdb.readString(data_addr)
-    print str_info
-    return
+	str_info = pygdb.readString(data_addr)
+	print str_info
+	return
 
 def test_patch():
-    
-    #pygdb = PyGDB(target = "./test_hook")
-    pygdb = PyGDB(arch = "amd64")
-    pygdb.writefile("test_patch", "SADKNJASNDKNSADNKJSANDSADKNJASNDKNSADNKJSANDSADKNJASNDKNSADNKJSAND")
+	
+	#pygdb = PyGDB(target = "./test_hook")
+	pygdb = PyGDB(arch = "amd64")
+	pygdb.writefile("test_patch", "SADKNJASNDKNSADNKJSANDSADKNJASNDKNSADNKJSANDSADKNJASNDKNSADNKJSAND")
 
-    patch_config = {
-        0 : "ni",
-        4 : "wo",
-        10 : "ha",
-    }
-    pygdb.patch_file("test_patch", patch_config, "test_patch.out")
+	patch_config = {
+		0 : "ni",
+		4 : "wo",
+		10 : "ha",
+	}
+	pygdb.patch_file("test_patch", patch_config, "test_patch.out")
 
-    asm_info = """
-    mov rax, rbx
-    push rsp
-    """
-    patch_config = {
-        0x400010 : "12",
-        0x400020 : ["data", "33"],
-        0x400024 : ["asm", asm_info],
-    }
-    pygdb.patch_file("test_patch.out", patch_config, base = 0x400000)
+	asm_info = """
+	mov rax, rbx
+	push rsp
+	"""
+	patch_config = {
+		0x400010 : "12",
+		0x400020 : ["data", "33"],
+		0x400024 : ["asm", asm_info],
+	}
+	pygdb.patch_file("test_patch.out", patch_config, base = 0x400000)
 
 
-    pygdb = PyGDB()
-    pygdb.load_source(arch = "amd64", text_addr = 0x8300000)
-    pygdb.set_bp("main")
-    pygdb.start()
+	pygdb = PyGDB()
+	pygdb.load_source(arch = "amd64", text_addr = 0x8300000)
+	pygdb.set_bp("main")
+	pygdb.start()
 
-    pygdb.interact()
+	pygdb.interact()
 
-    
+	
 def test_dup_io():
-    def hook(pygdb, bpType):
-        if bpType == "OnEnter":
-            data = pygdb.get_regs()
-            print data
-            data = pygdb.get_code(count = 10)
-            print data
-            data = pygdb.get_stack(count = 20)
-            print data
+	def hook(pygdb, bpType):
+		if bpType == "OnEnter":
+			data = pygdb.get_regs()
+			print data
+			data = pygdb.get_code(count = 10)
+			print data
+			data = pygdb.get_stack(count = 20)
+			print data
 
-    pygdb = PyGDB(target = "./test_dup_io")
-    b_id, _ = pygdb.set_bp("main")
-    pygdb.run()
-    pygdb.del_bp(b_id)
+	pygdb = PyGDB(target = "./test_dup_io")
+	b_id, _ = pygdb.set_bp("main")
+	pygdb.run()
+	pygdb.del_bp(b_id)
 
-    pygdb.dup_io(port = 12345, new_terminal = True)
-    #pygdb.dup_io(port = 12345, new_terminal = False)
-    pygdb.hook(0x400883, hook, [])
-    pygdb.Continue()
-    #pygdb.detach()
-    pygdb.interact()
+	pygdb.dup_io(port = 12345, new_terminal = True)
+	#pygdb.dup_io(port = 12345, new_terminal = False)
+	pygdb.hook(0x400883, hook, [])
+	pygdb.Continue()
+	#pygdb.detach()
+	pygdb.interact()
 
 
 import sys
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print "useage:"
-        print "\t python test_pygdb.py intel/arm/hook/mmap/patch/dup_io"
-    else:
-        if sys.argv[1] == "intel":
-            test_intel()
-        elif sys.argv[1] == "arm":
-            print "please run ./run_arm.sh first"
-            test_arm()
-        elif sys.argv[1] == "hook":
-            test_hook()
-        elif sys.argv[1] == "mmap":
-            test_mmap()
-        elif sys.argv[1] == "patch":
-            test_patch()
-        elif sys.argv[1] == "dup_io":
-            test_dup_io()
-        elif sys.argv[1] == "trace":
-            test_trace()
+	if len(sys.argv) < 2:
+		print "useage:"
+		print "\t python test_pygdb.py intel/arm/hook/mmap/patch/dup_io"
+	else:
+		if sys.argv[1] == "intel":
+			test_intel()
+		elif sys.argv[1] == "arm":
+			print "please run ./run_arm.sh first"
+			test_arm()
+		elif sys.argv[1] == "hook":
+			test_hook()
+		elif sys.argv[1] == "mmap":
+			test_mmap()
+		elif sys.argv[1] == "patch":
+			test_patch()
+		elif sys.argv[1] == "dup_io":
+			test_dup_io()
+		elif sys.argv[1] == "trace":
+			test_trace()
+		elif sys.argv[1] == "catch":
+			test_catch()
 ```
 
 ### test x86/x64
@@ -573,6 +622,16 @@ run 'python test_pygdb.py patch'
 test dup_io demo.
 
 run 'python test_pygdb.py dup_io'
+
+### test trace
+test trace demo.
+
+run 'python test_pygdb.py trace'
+
+### catch trace
+test catch demo.
+
+run 'python test_pygdb.py catch'
 
 ## More
 read the code!
@@ -625,4 +684,10 @@ TODO
 - (3). modify thread_id func.
 - (4). remove some bugs
 - (5). add trace example
+
+## 2022/4/7 Version 1.0.0
+- (1). add catch breakpoint func
+- (2). add hook_catch/hook_catch_syscall/hook_catch_load/hook_catch_unload/hook_catch_signal func
+- (3). remove some bugs
+- (4). add catch example
 

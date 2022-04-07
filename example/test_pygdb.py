@@ -226,6 +226,49 @@ def test_trace():
 	#pygdb.run_until(0x400562)
 	pygdb.interact()
 
+
+def test_catch():
+	def hook_syscall(pygdb, bpType, syscall_name):
+		if bpType == "OnEnter":
+			pc = pygdb.get_reg("pc")
+			print(hex(pc), "enter", syscall_name)
+			if syscall_name == "open":
+				rdi = pygdb.get_reg("rdi")
+				name = pygdb.readString(rdi)
+				print("open", name)
+			elif syscall_name == "read":
+				rdx = pygdb.get_reg("rdx")
+				print("read size", hex(rdx))
+		elif bpType == "OnRet":
+			pc = pygdb.get_reg("pc")
+			print(hex(pc), "return", syscall_name)
+
+	def hook_image(pygdb, libname, t_type):
+		print("-"*0x20)
+		print(t_type, libname)
+
+	def hook_signal(pygdb, info):
+		print("-"*0x20)
+		print("signal", info)
+
+	pygdb = PyGDB(target = "./test_hook")
+	pygdb.hook_catch_syscall("open", hook_syscall, ["open"])
+	addr_v = pygdb.hook_catch_syscall("read", hook_syscall, ["read"])
+
+	pygdb.hook_catch_load("", hook_image, ["load"])
+	pygdb.hook_catch_unload("", hook_image, ["unload"])
+
+	pygdb.hook_catch_signal("all", hook_signal, [])
+
+	pygdb.start()
+	pygdb.globals["cmp_count"] = 0
+
+	pygdb.run_until(0x400562)
+	pygdb.remove_hook(addr_v)
+	print(pygdb.hook_map.keys())
+
+	pygdb.interact()
+
 from pwn import *
 def test_mmap():
 	pygdb = PyGDB(target = "./test_hook")
@@ -415,3 +458,5 @@ if __name__ == "__main__":
 			test_dup_io()
 		elif sys.argv[1] == "trace":
 			test_trace()
+		elif sys.argv[1] == "catch":
+			test_catch()
