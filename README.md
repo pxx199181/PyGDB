@@ -420,8 +420,8 @@ def test_mmap():
 	int open_diy(char *filename, int md, int flag);
 	int strlen_diy(char *data);
 	void close_diy(int fd);
-	gen_from_pwntools(int write(int fd, char* data, int size));
-	gen_from_pwntools(int open(char* filename, int mode, int flag));
+	gen_from_syscall(int write(int fd, char* data, int size));
+	gen_from_syscall(int open(char* filename, int mode, int flag));
 	int upper_str(char *data, char val) {
 		char filename[10];
 		%s
@@ -510,6 +510,100 @@ def test_mmap():
 	print str_info
 	return
 
+import socket
+def test_inject():
+	pygdb = PyGDB(target = "./test_hook")
+	#pygdb.
+	bp_id, bp_addr = pygdb.set_bp("main")
+	#pygdb.interact()
+	pygdb.start()
+	pygdb.del_bp(bp_id)
+
+	context(arch = pygdb.arch, os = 'linux')
+		
+		
+	close_code = pygdb.gen_inject_asm(shellcraft.close("rdi"))
+	recv_data = pygdb.gen_stack_value("recv_data", "welcome to test\x00")
+	socket_data = pygdb.gen_stack_value("socket_addr", p16(2) + p16(0x4444) + p32(0x0100007f) + p64(0))
+	c_source = """
+	int strlen_diy(char *data);
+	void close_diy(int fd);
+	gen_from_syscall(int write(int fd, char* data, int size));
+	gen_from_syscall(int read(int fd, char* data, int size));
+	gen_from_syscall(int socket(int af, int sock, int flag));
+	gen_from_syscall(int bind(int fd, char *addr, int size));
+	gen_from_syscall(int listen(int fd, int size));
+	gen_from_syscall(int accept(int fd, char *addr, char *flag));
+	gen_from_syscall(int close(int fd));
+	gen_from_syscall(int setsockopt(int fd, int level, int optname, char* optval, int optlen));
+	gen_from_embed(memset);
+	gen_from_embed(strlen);
+	gen_from_embed(mov_addr_rax);
+	int main_logic_function(char *data, char val) {
+		char recv_data[0x10] = {0};
+		char socket_addr[0x10];
+		%s
+		int listen_fd = socket(2, 1, 0);
+		int option = 1;
+		mov_addr_rax(&option);
+		gen_from_asm("mov r10, rax;");
+		if (setsockopt(listen_fd, %d, %d, (char*)&option, sizeof(option)) < 0)
+			return ;
+		if (bind(listen_fd, socket_addr, 0x10) < 0)
+			return ;
+		if (listen(listen_fd, 0x10) < 0)
+			return ;
+		int conn_fd = accept(listen_fd, 0, 0);
+		read(conn_fd, recv_data, 0x10);
+		write(conn_fd, recv_data, 0x10);
+		if (data)
+			write(conn_fd, data, strlen(data));
+		close(conn_fd);
+		return ;
+	}
+	int print(void *data) {
+		return write(1, data, strlen(data));
+	}
+	"""%(socket_data, socket.SOL_SOCKET, socket.SO_REUSEADDR)
+
+	data = pygdb.gen_from_pwntools("gen_from_pwntools(listen(0x4444));", show = True)
+	data = pygdb.gen_from_pwntools("gen_from_pwntools(setsockopt(0x3, 1, 1));", show = True)
+	data = pygdb.gen_from_syscall("gen_from_syscall(int listen(int fd, int size));")
+	print("data:")
+	print(data)
+
+	code_data = pygdb.gen_payload(c_source, "main_logic_function")#, obj_name = "uuu_obj")
+	code_addr = 0x8304000
+	data_addr = 0x8300000
+	#print data.encode("hex")
+
+	map_config = {
+		data_addr:[0x1000, "rw"],
+		code_addr:[0x2000, "wx"],
+	}
+	data_config = {
+		data_addr:"welcome to use PyGDB\n", 
+		code_addr:code_data, 
+	}
+
+	pygdb.init_map_config(map_config)
+	pygdb.init_data_config(data_config)
+
+	args = [data_addr, 0x20]
+	pygdb.call(code_addr, args)
+
+	#code_data = pygdb.gen_payload(c_source, "main_logic_function")#, obj_name = "uuu_obj")
+	#pygdb.make_tiny_elf(code_data, 'code.bin', 0x600000)
+	"""
+	pygdb.set_reg("rdi", data_addr)
+	pygdb.set_reg("rsi", 0x20)
+	pygdb.set_reg("pc", code_addr)
+
+	#pygdb.run_until(0x83040bc)
+	#"""
+	pygdb.interact()
+	return
+
 def test_patch():
 	
 	#pygdb = PyGDB(target = "./test_hook")
@@ -589,6 +683,8 @@ if __name__ == "__main__":
 			test_trace()
 		elif sys.argv[1] == "catch":
 			test_catch()
+		elif sys.argv[1] == "inject":
+			test_inject()
 ```
 
 ### test x86/x64
@@ -628,10 +724,15 @@ test trace demo.
 
 run 'python test_pygdb.py trace'
 
-### catch trace
+### test catch
 test catch demo.
 
 run 'python test_pygdb.py catch'
+
+### test inject
+test inject demo.
+
+run 'python test_pygdb.py inject'
 
 ## More
 read the code!
@@ -690,4 +791,9 @@ TODO
 - (2). add hook_catch/hook_catch_syscall/hook_catch_load/hook_catch_unload/hook_catch_signal func
 - (3). remove some bugs
 - (4). add catch example
+
+## 2022/4/8 Version 1.0.0
+- (1). add gen_from_shellcode/gen_from_syscall/gen_from_embed/gen_from_asm func
+- (2). remove some bugs
+- (3). add inject example
 

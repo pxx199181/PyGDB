@@ -191,6 +191,7 @@ class PyGDB():
 		self.priv_globals["lib_path"] = {}
 		self.priv_globals["lib_elf"] = {}
 		self.arch = arch
+		self.bits = None
 		self.hook_map = {}
 		self.io = None
 		self.gdb_pid = None
@@ -214,10 +215,16 @@ class PyGDB():
 			self.bin_path = target
 
 			if (self.arch == None):
-				self.arch = self.getarch()
+				self.arch, self.bits = self.getarch()
 
 		if self.arch is None:
 			self.arch = "i386"
+			self.bits = 32
+		elif self.bits is None:
+			if "64" in self.arch:
+				self.bits = 64
+			else:
+				self.bits = 32
 
 		self.arch_args = []
 		if self.arch.lower() in ["arch64", "arm"]:
@@ -258,26 +265,26 @@ class PyGDB():
 				capsize = 8
 				word = "gx "
 				arch = "x86-64"
-				return "amd64"
+				return "amd64", 64
 			elif "arch64" in info :
 				capsize = 8
 				word = "gx "
 				arch = "arch64"
-				return "arch64"
+				return "arch64", 64
 			elif "arm" in info :
 				capsize = 4
 				word = "wx "
 				arch = "arm"
-				return "arm"
+				return "arm", 32
 			elif "80386" in info:
 				word = "wx "
 				capsize = 4
 				arch = "i386"
-				return  "i386"
+				return  "i386", 32
 			else:
-				return None
+				return None, None
 		else :
-			return None
+			return None, None
 
 	def run_gdb(self):
 		if io_wrapper == "zio":
@@ -1099,7 +1106,7 @@ class PyGDB():
 			print("please install pwntools")
 			return
 
-		context(arch = self.arch, os = 'linux')
+		context(arch = self.arch, bits = self.bits, os = 'linux')
 
 		if (addr & 0xfff) != 0:
 			size = size + 0x1000 - (addr&0xfff)
@@ -1580,7 +1587,7 @@ class PyGDB():
 		self.set_reg("sp", sp)
 		args = args_new
 
-		context(arch = self.arch, os = 'linux')
+		context(arch = self.arch, bits = self.bits, os = 'linux')
 		#print args
 		code_asm = shellcraft.syscall(syscall, *args)
 		#print code_asm
@@ -1617,7 +1624,7 @@ class PyGDB():
 			self.set_reg("sp", sp)
 			args = args_new
 
-		context(arch = self.arch, os = 'linux')
+		context(arch = self.arch, bits = self.bits, os = 'linux')
 		code_asm = getattr(shellcraft, func)(*args)
 		#print code_asm
 		shellcode = asm(code_asm)
@@ -1767,7 +1774,7 @@ class PyGDB():
 			self.write_mem(addr, data)
 
 	def run_cmd(self, cmd_line):
-		data = do_command(cmdline)
+		data = do_command(cmd_line)
 		return data
 
 	def gen_rand_str(self, size = 16):
@@ -1797,7 +1804,7 @@ class PyGDB():
 		if io_wrapper == "zio":
 			print("please install pwntools")
 			return
-		context(arch = self.arch, os = 'linux')
+		context(arch = self.arch, bits = self.bits, os = 'linux')
 
 		if option == "":
 			option += " -fno-stack-protector"
@@ -1806,7 +1813,10 @@ class PyGDB():
 			if "64" not in self.arch:
 				option += " -m32"
 
+		source_data = self.gen_from_syscall(source_data)
 		source_data = self.gen_from_pwntools(source_data)
+		source_data = self.gen_from_embed(source_data)
+		source_data = self.gen_from_asm(source_data)
 
 		source = ""
 		source += source_data + "\n"
@@ -1836,11 +1846,14 @@ class PyGDB():
 			data = elf_info.read(entry_addr, size)
 		else:
 			data = "error"
+			raise Exception("error")
 
 		if auto_gen:
 			import os
-			os.unlink(cfile_name)
-			os.unlink(obj_name)
+			if os.path.exists(cfile_name):
+				os.unlink(cfile_name)
+			if os.path.exists(obj_name):
+				os.unlink(obj_name)
 
 		return data
 
@@ -1848,8 +1861,9 @@ class PyGDB():
 		if io_wrapper == "zio":
 			print("please install pwntools")
 			return
-		context(arch = self.arch, os = 'linux')
-		
+		context(arch = self.arch, bits = self.bits, os = 'linux')
+		#print("code_asm:")
+		#print(code_asm)
 		code_data = asm(code_asm, arch = self.arch, os = "linux")
 		content = ""
 		content += "__asm__ __volatile__(\""
@@ -1877,7 +1891,7 @@ class PyGDB():
 		if io_wrapper == "zio":
 			print("please install pwntools")
 			return
-		context(arch = self.arch, os = 'linux')
+		context(arch = self.arch, bits = self.bits, os = 'linux')
 		return asm(asm_info, vma = va)
 
 	def patch_file(self, infile, patch_config, outfile = None, base = 0):
@@ -1916,7 +1930,8 @@ class PyGDB():
 		self.run_cmd("chmod +x %s"%outfile)
 
 
-	def gen_from_pwntools(self, c_source):
+	def gen_from_pwntools(self, c_source, show = False):
+		context.update(arch = self.arch, bits = self.bits, os = 'linux')
 		name_map = {}
 		start_model = "gen_from_pwntools("
 
@@ -1931,41 +1946,279 @@ class PyGDB():
 					continue
 				voto_info = line_new[len(start_model):pos_e].replace("\t", " ")
 				while voto_info.find("  ") != -1:
-					voto_info = line_new.replace("  ", " ")
-				name = voto_info.split(" ")[1].split("(")[0]
-				
-				args_count = len(voto_info.split(","))
+					voto_info = voto_info.replace("  ", " ")
+				voto_info = voto_info.strip()
+				name = voto_info.split("(")[0].split(" ")[-1].strip()
+
+				arg_info = voto_info
+				while True:
+					if "(" in arg_info:
+						arg_info = arg_info.split("(")[1]
+					elif ")" in arg_info:
+						arg_info = arg_info.split(")")[0]
+					else:
+						break
+				arg_info_list = []
+				#print("arg_info:", arg_info)
+				args_count = len(arg_info.split(","))
 				code_asm = ""
-				if args_count > 1:
+				if args_count > 0:
 					if "i386" in self.arch.lower():
 						#code_asm = getattr(shellcraft, name)(self.arch_args[:args_count])
-						args_name = ["eax", "ebx", "ecx", "edx", "edi", "esi", "ebp"]
-						in_arg_list = []
-						for i in range(args_count):
-							code_asm += "push %s\n"%args_name[i]
-							in_arg_list.append(args_name[i])
-						code_asm += getattr(shellcraft, name)(*(args_name[:args_count]))
-						for i in range(args_count-1, -1, -1):
-							code_asm += "pop %s\n"%args_name[i]
-							in_arg_list.append(args_name[i])
+						args_name = ["ebx", "ecx", "edx", "edi", "esi", "ebp"]
+
+						real_args = []
+						cur_idx = 0
+						for arg in arg_info.split(","):
+							arg = arg.strip()
+							if arg.isdigit():
+								real_args.append(int(arg))
+							elif arg.startswith("0x"):
+								real_args.append(int(arg, 16))
+							elif arg[0] in ["\'", "\""] and arg[-1] in ["\'", "\""]:
+								real_args.append(arg)
+								real_args.append(arg[1:-1].strip())
+							else:
+								reg = args_name[cur_idx]
+								real_args.append(reg)
+								raise Exception("args error '%s' in %s" % (arg, name))
+						print("real_args:", name, real_args)
+						code_asm += getattr(shellcraft, name)(*(real_args))
 					else:
 						#print getattr(shellcraft, name)("rdi", "rsi")
 						#print shellcraft.write(*(self.arch_args[:args_count]))
 						#print getattr(shellcraft, name)(*(self.arch_args[:args_count]))
-						code_asm = getattr(shellcraft, name)(*(self.arch_args[:args_count]))
+						args_name = self.arch_args
+						real_args = []
+						cur_idx = 0
+						for arg in arg_info.split(","):
+							arg = arg.strip()
+							if arg.isdigit():
+								real_args.append(int(arg))
+							elif arg.startswith("0x"):
+								real_args.append(int(arg, 16))
+							elif arg[0] in ["\'", "\""] and arg[-1] in ["\'", "\""]:
+								real_args.append(arg[1:-1].strip())
+							else:
+								#print("error")
+								raise Exception("args error '%s' in %s" % (arg, name))
+						#print("real_args:", real_args)
+						code_asm = getattr(shellcraft, name)(*(real_args))
 				else:
 					code_asm = getattr(shellcraft, name)()
-
+				if show:
+					print("code_asm:", name)
+					print(code_asm)
 				inject_asm = self.gen_inject_asm(code_asm)
 				
-				prefix_list.append(voto_info + ";")
-
+				#prefix_list.append(voto_info + ";")
 				define_content = ""
-				define_content += voto_info + "{\n"
+				define_content += "{\n"
 				define_content += inject_asm + "\n"
 				define_content += "}"
 
-				suffix_list.append(define_content)
+				mid_list.append(define_content)
+
+			else:
+				mid_list.append(line)
+		new_content = ""
+		new_content += "\n".join(prefix_list + mid_list + suffix_list)
+
+		return new_content
+
+	def gen_from_embed(self, c_source, show = False):
+		name_map = {}
+		start_model = "gen_from_embed("
+
+		embed_functions = {}
+		embed_functions["strlen"] = """
+int strlen(char *data) {
+	int i;
+	for(i = 0; ; i++)
+		if (data[i] == 0)
+			break;
+	return i;
+}
+"""
+		embed_functions["memset"] = """
+void memset(char *data, char ch, int size) {
+	int i;
+	for(i = 0; i < size; i++)
+		data[i] = ch;
+}
+"""
+		embed_functions["mov_val_rax"] = """
+long int mov_val_rax(long int data) {
+	return data;
+}
+"""
+		embed_functions["mov_addr_rax"] = """
+char* mov_addr_rax(void* data) {
+	return (char *)data;
+}
+"""
+
+		prefix_list = []
+		suffix_list = []
+		mid_list = []
+		for line in c_source.split("\n"):
+			line_new = line.strip()
+			if line_new.startswith(start_model):
+				pos_e = line_new.rfind(")")
+				if pos_e == -1:
+					continue
+				voto_info = line_new[len(start_model):pos_e].replace("\t", " ")
+				while voto_info.find("  ") != -1:
+					voto_info = voto_info.replace("  ", " ")
+				voto_info = voto_info.strip()
+				name = voto_info.split("(")[0].split(" ")[-1].strip()
+
+				if name in embed_functions.keys():
+					code_asm = embed_functions[name].strip()
+					if show:
+						print("code_asm:", name)
+						print(code_asm)
+					inject_asm = code_asm
+
+					voto_info = code_asm.split("\n")[0].strip("{").strip()
+					prefix_list.append(voto_info + ";")
+
+					define_content = ""
+					define_content += inject_asm + "\n"
+
+					suffix_list.append(define_content.strip().strip())
+
+			else:
+				mid_list.append(line)
+		new_content = ""
+		new_content += "\n".join(prefix_list + mid_list + suffix_list)
+
+		return new_content
+
+	def gen_from_asm(self, c_source, show = False):
+		context(arch = self.arch, bits = self.bits, os = 'linux')
+
+		name_map = {}
+		start_model = "gen_from_asm("
+
+		prefix_list = []
+		suffix_list = []
+		mid_list = []
+		for line in c_source.split("\n"):
+			line_new = line.strip()
+			if line_new.startswith(start_model):
+				pos_e = line_new.rfind(")")
+				if pos_e == -1:
+					continue
+				asm_code = line_new[len(start_model):pos_e].replace("\t", " ")
+				while asm_code.find("  ") != -1:
+					asm_code = asm_code.replace("  ", " ")
+				
+				if asm_code[0] in ["\'", "\""] and asm_code[-1] in ["\'", "\""]:
+					asm_code = asm_code[1:-1].strip()
+				asm_code = asm_code.strip()
+				asm_code = asm_code.replace("\\n", "\n")
+				asm_code = asm_code.replace(";", "\n")
+
+				print("asm_code:")
+				print(repr(asm_code))
+				inject_asm = self.gen_inject_asm(asm_code)
+
+				define_content = inject_asm
+
+				mid_list.append(define_content.strip())
+
+			else:
+				mid_list.append(line)
+		new_content = ""
+		new_content += "\n".join(prefix_list + mid_list + suffix_list)
+
+		return new_content
+
+	def gen_from_syscall(self, c_source, show = False):
+
+		context(arch = self.arch, bits = self.bits, os = 'linux')
+		name_map = {}
+		start_model = "gen_from_syscall("
+
+		prefix_list = []
+		suffix_list = []
+		mid_list = []
+		for line in c_source.split("\n"):
+			line_new = line.strip()
+			if line_new.startswith(start_model):
+				pos_e = line_new.rfind(")")
+				if pos_e == -1:
+					continue
+				voto_info = line_new[len(start_model):pos_e].replace("\t", " ")
+				while voto_info.find("  ") != -1:
+					voto_info = voto_info.replace("  ", " ")
+				voto_info = voto_info.strip()
+				name = voto_info.split("(")[0].split(" ")[-1].strip()
+
+				arg_info = voto_info
+				while True:
+					if "(" in arg_info:
+						arg_info = arg_info.split("(")[1]
+					elif ")" in arg_info:
+						arg_info = arg_info.split(")")[0]
+					else:
+						break
+				arg_info_list = []
+				#print("arg_info:", arg_info)
+				args_count = len(arg_info.split(","))
+				code_asm = ""
+				if args_count > 0:
+					if "i386" in self.arch.lower():
+						#code_asm = getattr(shellcraft, name)(self.arch_args[:args_count])
+						args_name = ["ebx", "ecx", "edx", "edi", "esi", "ebp"]
+
+						stack_arg_list = args_name[:args_count]
+
+						for i in range(len(stack_arg_list)):
+							code_asm += "push %s\n"%stack_arg_list[i]
+							code_asm += "mov %s, dword ptr [esp + 0x%x]\n"%(stack_arg_list[i], (i+1)*4)
+						#code_asm += getattr(shellcraft, name)(*(real_args))
+						code_asm += "push SYS_%s\n"%name
+						code_asm += "pop eax\n"
+						code_asm += "int 0x80\n"
+						for i in range(len(stack_arg_list)-1, -1, -1):
+							code_asm += "pop %s\n"%stack_arg_list[i]
+
+
+					else:
+						#print getattr(shellcraft, name)("rdi", "rsi")
+						#print shellcraft.write(*(self.arch_args[:args_count]))
+						#print getattr(shellcraft, name)(*(self.arch_args[:args_count]))
+						args_name = self.arch_args
+						stack_arg_list = args_name[:args_count]
+						#real_args = []
+						code_asm += "push SYS_%s\n"%name
+						code_asm += "pop rax\n"
+						code_asm += "syscall\n"
+						#code_asm = getattr(shellcraft, name)(*(stack_arg_list))
+				else:
+					#code_asm = getattr(shellcraft, name)()
+					code_asm += "push SYS_%s\n"%name
+					code_asm += "pop rax\n"
+					code_asm += "syscall\n"
+				
+				if show:
+					print("code_asm:", name)
+					print(code_asm)
+				inject_asm = self.gen_inject_asm(code_asm)
+				
+				#voto_info = voto_info.split(name)[0] + name + "(%s)"%(" ,".join(arg_info_list))
+				if voto_info.startswith(name):
+					voto_info = "int " + voto_info
+				prefix_list.append(voto_info + ";")
+
+				define_content = ""
+				define_content += voto_info + " {\n"
+				define_content += inject_asm + "\n"
+				define_content += "}"
+
+				suffix_list.append(define_content.strip())
 
 			else:
 				mid_list.append(line)
