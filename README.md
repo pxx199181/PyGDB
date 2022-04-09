@@ -271,88 +271,42 @@ def test_hook():
 
 
 def test_trace():
-	def hook_test(pygdb, bpType, id, addr, value):
+	def hook_fopen(pygdb, bpType):
 		if bpType == "OnEnter":
-			pc = pygdb.get_reg("pc")
-			print("pc:", hex(pc))
-			print("id--:", id)
-			print("addr:", hex(addr))
-			print("value:", value)
+			rdi = pygdb.get_reg("rdi")
+			filename = pygdb.readString(rdi)
+			print("fopen:", filename)
 
-	def hook_out(pygdb, bpType, id, addr, value):
+	def hook_fread(pygdb, bpType):
 		if bpType == "OnEnter":
-			pc = pygdb.get_reg("pc")
-			print("pc:", hex(pc))
-			print("id--:", id)
-			print("addr:", hex(addr))
-			print("value:", value)
+			count = pygdb.get_reg("rsi")
+			size = pygdb.get_reg("rdx")
+			print("fread:", count*size)
 
-			rbp = pygdb.get_reg("rbp")
-			val = pygdb.read_int(rbp - 4)
+	def hook_other_thread(pygdb, bpType):
+		if bpType == "OnEnter":
+			thread_num, addr_v = pygdb.get_thread_id()
+			rdi = pygdb.get_reg("rdi")
+			info = pygdb.readString(rdi)
+			print("thread_%d(0x%x): printf(%s)"%(thread_num, addr_v, repr(info)))
 
-			#rdi = pygdb.get_reg("rdi")
-			rdi = rbp-4
-			if pygdb.globals["only_once"] == False:
-				print("*"*0x20)
-				pygdb.globals["only_once"] = True
-				pygdb.hook_mem_read(rdi, hook_mem_1)
-				#pygdb.hook_mem_write(rdi, hook_mem_1)
-				#pygdb.hook_mem_access(rdi, hook_mem_1)
-				#pygdb.io.interactive()
 
-			if val == 10:
-				return False
-			else:
-				print("val:", val)
+	pygdb = PyGDB(target = "./test_thread")
+	pygdb.hook("fopen", hook_fopen)
+	pygdb.hook("fread", hook_fread)
+	pygdb.hook(0x400C0A, hook_other_thread)
 
-			if val == 4:
-				pygdb.remove_hook(0x40054d)
-			else:
-				pass
-
-			if val == 5:
-				pygdb.remove_hook(0x400552)
-			else:
-				pass
-
-	def hook_mem_1(pygdb, values):
-		print("-"*0x20)
-		print("values", [hex(c) for c in values])
-
-	pygdb = PyGDB(target = "./test_hook")
-	pygdb.hook(0x40054d, hook_test, [0, 0x40054d, "call printf",])
-	pygdb.hook(0x400552, hook_out, [0, 0x400552, "cmp",])
-
-	pygdb.globals["only_once"] = False
-
-	#b_addr = pygdb.get_symbol_value("main")
-	#bp_num, _ = pygdb.set_bp(b_addr)
 	pygdb.start()
 
-	#pygdb.interact()
+	trace_handler = None
 
-	#pygdb.Continue()
-	#pygdb.clear_hook()
-	#pygdb.stepi()
-
-	#pygdb.del_bp(bp_num)
-
-	pygdb.globals["cmp_count"] = 0
-	def trace_handler(pygdb, addr):
-		#print(hex(addr))
-		asmInfo = pygdb.get_disasm(addr, 1)
-		if asmInfo[0][1].startswith("cmp"):
-			pygdb.globals["cmp_count"] += 1
-			if pygdb.globals["cmp_count"] == 25:
-				return "end"
-
-	b_addr = pygdb.get_reg("pc")
-	print("b_addr: " + hex(b_addr))
+	b_addr = 0x400A88
+	e_addr = 0x400B9C
 	function_mode = True
-	function_mode = False
-	pygdb.trace(b_addr = b_addr, e_addr = 0x400562, logPattern = "trace_log", byThread = True, asmCode = True, record_maps = [0x400000, 0x500000], trace_handler = trace_handler, function_mode = function_mode)
-	#pygdb.Continue()
-	#pygdb.run_until(0x400562)
+	#function_mode = False
+	show = True
+	pygdb.trace(b_addr = b_addr, e_addr = e_addr, logPattern = "trace_log", byThread = True, asmCode = True, record_maps = [0x400000, 0x500000], trace_handler = trace_handler, function_mode = function_mode, show = show, oneThread = True)
+
 	pygdb.interact()
 
 
@@ -796,4 +750,9 @@ TODO
 - (1). add gen_from_shellcode/gen_from_syscall/gen_from_embed/gen_from_asm func
 - (2). remove some bugs
 - (3). add inject example
+
+## 2022/4/9 Version 1.0.0
+- (1). modify trace support thread
+- (2). remove some bugs
+- (3). modify trace example
 
