@@ -1042,6 +1042,11 @@ class PyGDB():
 							return True, pc
 			return False, pc
 
+	def go(self):
+		self.Continue()
+
+	def Go(self):
+		self.Continue()
 
 	def Continue(self):
 		while True:
@@ -2340,6 +2345,17 @@ int main() {
 				addr_v = int(addr_v, 16)
 		return thread_num, addr_v
 
+	def get_thread_idv(self):
+		thread_num = 0
+		addr_v = None
+
+		ret_v = self.do_gdb_ret("thread")
+		#print ret_v
+		b_num = self.cut_str(ret_v, "thread is ", " (")
+		if b_num:
+			thread_num = int(b_num.strip())
+		return thread_num
+
 	"""
 	def call_s(self, func, args = [], lib_path = "libc.so.6", use_addr = None):
 		#self.save_context()
@@ -2386,6 +2402,11 @@ int main() {
 				addr_list.append(-1)
 		return addr_list
 
+	def chg_thread(self, thread_id):
+		cur_thread_id = self.get_thread_idv()
+		#print("chg_thread:", cur_thread_id, thread_id)
+		self.do_gdb("thread %d"%thread_id)
+
 	def skip_reason(self, skip_sign):
 		if skip_sign == 1:
 			return "handler"
@@ -2396,7 +2417,7 @@ int main() {
 		else:
 			return "unkown_%d"%skip_sign
 
-	def trace(self, b_addr = None, e_addr = None, logPattern = "trace", record_maps = [], skip_list = [], byThread = False, asmCode = False, appendMode = False, is_pie = False, rec_base = 0x0, skip_loops = True, trace_handler = None, function_mode = False):
+	def trace(self, b_addr = None, e_addr = None, logPattern = "trace", record_maps = [], skip_list = [], byThread = False, asmCode = False, appendMode = False, is_pie = False, rec_base = 0x0, skip_loops = True, trace_handler = None, function_mode = False, show = False, oneThread = True):
 
 		if b_addr is not None:
 			b_addr = self.real_addr(b_addr, is_pie)
@@ -2404,9 +2425,18 @@ int main() {
 			e_addr = self.real_addr(e_addr, is_pie)
 
 		pc = self.get_reg("pc")
-		print("0x%x -> 0x%x"%(b_addr, pc))
 		if b_addr is not None and pc != b_addr:
+			print("run_until 0x%x -> 0x%x"%(pc, b_addr))
 			pc = self.run_until(b_addr)
+
+		if function_mode == True and oneThread == False:
+			print("function_mode only support oneThread")
+			self.interact()
+			return ;
+
+		if oneThread:
+			thread_id, _ = self.get_thread_id()
+			self.priv_globals["trace_thread_id"] = thread_id
 
 		suffix = ".log"
 		if logPattern.endswith(".log"):
@@ -2453,14 +2483,29 @@ int main() {
 						logfile_list.append(logfile)
 
 				if len(info) != 0:
-					#print(info)
+					if show:
+						print(info)
 					self.appendfile(logfile, info + "\n")
 
 				if (e_addr is not None and pc == e_addr) or end_status == True:
 					break
 
 				last_addr = pc
-				pc = self.StepI()
+
+				while True:
+					pc = self.StepI()
+
+					if oneThread:
+						thread_id, _ = self.get_thread_id()
+						if self.priv_globals["trace_thread_id"] != thread_id:
+							self.chg_thread(self.priv_globals["trace_thread_id"])
+							#print("1 last_pc:", hex(last_addr), "pc:", hex(pc))
+							pc = self.get_reg("pc")
+							#print("now_pc:", hex(pc))
+							#self.interact()
+							if pc == last_addr:
+								continue
+					break
 
 				skip_sign = 0	
 				if trace_handler is not None:
@@ -2495,24 +2540,47 @@ int main() {
 							func_level = 0
 					else:
 						skip_chains = " [0x%x -> 0x%x -> 0x%x]"%(last_addr, pc, next_addr)
-						self.appendfile(logfile, "-- skip chains -> %s%s"%(self.skip_reason(skip_sign), skip_chains) + "\n")	
+						info = "-- skip chains -> %s%s"%(self.skip_reason(skip_sign), skip_chains)
+						if show:
+							print(info)
+						self.appendfile(logfile, info + "\n")	
 						
 					if next_addr == -1:
 						print("next_addr:", -1)
 						self.interact()
+						return ;
 					pc = self.run_until(next_addr)
+					if oneThread:
+						thread_id, _ = self.get_thread_id()
+						if self.priv_globals["trace_thread_id"] != thread_id:
+							self.chg_thread(self.priv_globals["trace_thread_id"])
+							#print("2 last_pc:", hex(last_addr), "pc:", hex(pc))
+							pc = self.get_reg("pc")
+							#print("now_pc:", hex(pc))
+							#self.interact()
 
 				if skip_loops == True and pc == last_addr:
 					info_items = self.get_disasm(pc, 2, False)
 					next_addr = info_items[1][0]
 					pc = self.run_until(next_addr)
+
+					if oneThread:
+						thread_id, _ = self.get_thread_id()
+						if self.priv_globals["trace_thread_id"] != thread_id:
+							self.chg_thread(self.priv_globals["trace_thread_id"])
+							#print("3 last_pc:", hex(last_addr), "pc:", hex(pc))
+							pc = self.get_reg("pc")
+							#print("now_pc:", hex(pc))
+							#self.interact()
+
 					if pc == last_addr:
 						self.interact()
+						return ;
 					continue	
 
 			except Exception as ex:
 				print('[+] ' + repr(ex))
-				self.interrupt_process()
+				#self.interrupt_process()
 				self.interact()
 				break
 		print("----------------- trace end -----------------")
