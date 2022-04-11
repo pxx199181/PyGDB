@@ -2723,7 +2723,7 @@ int main() {
 		self.wait_interact()
 		return
 
-	def setbuf0(self):
+	def setvbuf0(self):
 
 		stdin = self.get_symbol_value("stdin")
 		stdout = self.get_symbol_value("stdout")
@@ -2859,14 +2859,23 @@ int main() {
 			line = line[:pos_b] + line[pos_e+1:]
 		return line
 
-	def inject_restore(self, addr):
-		if addr in self.inject_hook_map.keys():
-			self.remove_inject_hook(addr)
-		elif addr in self.inject_patch_map.keys():
+	def inject_remove_patch(self, addr):
+		if addr in self.inject_patch_map.keys():
 			[_, origin_data] = self.inject_patch_map[addr]
 			self.write_mem(addr, origin_data)
 			self.inject_patch_map.pop(addr)
 
+	def inject_restore(self, addr):
+		if addr in self.inject_hook_map.keys():
+			self.remove_inject_hook(addr)
+		elif addr in self.inject_patch_map.keys():
+			self.inject_remove_patch(addr)
+			"""
+			[_, origin_data] = self.inject_patch_map[addr]
+			self.write_mem(addr, origin_data)
+			self.inject_patch_map.pop(addr)
+			"""
+			
 	def inject_patch_data(self, addr, data):
 		self.inject_restore(addr)
 
@@ -3029,10 +3038,11 @@ int main() {
 		if addr in self.inject_hook_map.keys():
 			hook_item = self.inject_hook_map[addr]
 			[patch_addr, patch_code, origin_addr, origin_data] = hook_item
-			self.write_mem(addr, origin_data)
 			self.inject_hook_free(patch_addr, len(patch_code))
 			self.inject_hook_map.pop(addr)
-			self.inject_patch_map.pop(addr)
+			#self.inject_patch_map.pop(addr)
+			#self.write_mem(addr, origin_data)
+			self.inject_remove_patch(addr)
 
 	def clear_inject_hook(self):
 		for key in self.inject_hook_map.keys():
@@ -3065,7 +3075,8 @@ int main() {
 
 	def inject_hook_free(self, addr, size):
 		if addr in self.inject_patch_map.keys():
-			self.inject_patch_map.pop(addr)
+			#self.inject_patch_map.pop(addr)
+			self.inject_remove_patch(addr)
 
 		if addr < self.inject_hook_addr and addr + size == self.inject_hook_addr:
 			self.inject_hook_size += self.inject_hook_addr - addr

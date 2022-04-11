@@ -278,9 +278,10 @@ def test_inject_hook():
 
 	pygdb.start()
 
-	#pygdb.dup_io(port = 12345, new_terminal = True)
-	#import time
-	#time.sleep(2)
+	pygdb.setvbuf0()
+	pygdb.dup_io(port = 12345, new_terminal = True)
+	import time
+	time.sleep(2)
 
 	code_addr = 0x8304000
 	data_addr = 0x8300000
@@ -298,9 +299,16 @@ def test_inject_hook():
 	print("globals_map:", globals_map)
 	pygdb.config_inject_map(code_addr, 0x1000, globals_map)
 
-
+	#
+	choice = raw_input("mode(patch to file?(1:yes, 0:no))").strip()
+	if choice == "1":
+		use_addr = 0x400460
+		use_size  = 0x4004A0 - 0x400460
+	else:
+		use_addr = code_addr
+		use_size = 0x1000
 	#pygdb.config_inject_map(code_addr, 0x1000, globals_map)
-	pygdb.config_inject_map(0x400460, 0x4004A0 - 0x400460, globals_map)
+	pygdb.config_inject_map(use_addr, use_size, globals_map)
 
 	#pygdb.interact()
 
@@ -323,7 +331,10 @@ def test_inject_hook():
 
 	pygdb.run_until(0x400562)
 
-	pygdb.inject_into_file("./test_hook", "./test_hook_p", base = 0x400000)
+	if choice == "1":
+		pygdb.inject_into_file("./test_hook", "./test_hook_p", base = 0x400000)
+
+	#pygdb.interact() # normal exit
 
 	print("before remove_inject_hook")
 	pygdb.show_inject_info()
@@ -349,6 +360,10 @@ def test_inject_hook():
 	print("")
 	print("after clear_inject_hook")
 	pygdb.show_inject_info()
+
+	print("stage 2")
+	pygdb.set_reg("pc", 0x0400526)
+	pygdb.run_until(0x400562)
 
 	pygdb.interact()
 
@@ -701,7 +716,7 @@ import sys
 if __name__ == "__main__":
 	if len(sys.argv) < 2:
 		print "useage:"
-		print "\t python test_pygdb.py intel/arm/hook/mmap/patch/dup_io"
+		print "\t python test_pygdb.py intel/arm/hook/mmap/patch/dup_io/trace/catch/inject/inject_hook"
 	else:
 		if sys.argv[1] == "intel":
 			test_intel()
