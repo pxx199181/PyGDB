@@ -1,4 +1,5 @@
 import mf_angelheap
+import traceback
 try:
 	from pwn import *
 	from pwnlib.util import misc
@@ -409,25 +410,30 @@ class PyGDB():
 		elif hard: 
 			cmdline = "hard"
 
+		origin_addr = addr
 		addr = self.real_addr(addr, is_pie)
-		if type(addr) is not str:
-			addr_str = "0x%x"%addr
-		else:
-			addr_str = addr
+
+
+		if type(addr) is str:
+			addr = self.get_symbol_value(addr)
+		addr_str = "0x%x"%addr
 
 		ret_v = self.do_pygdb_ret("set_breakpoint %s %s"%(addr_str, cmdline))
-		#print ret_v
+		#print "ret_v:", ret_v
 		b_num = re.search("reakpoint \d+ at", ret_v)
 		if b_num:
 			b_num = b_num.group().split()[1]
 			fini_num = int(b_num)
 
+			#print("ret_v:", ret_v)
 			addr_v = self.cut_str(ret_v, " %d at "%fini_num)
 			if ": " in addr_v:
 				addr_v = addr_v.split(": ")[0]
+			if " at " in addr_v:
+				addr_v = addr_v.split(" at ")[-1]
 			if addr_v is not None:
 				addr_v = int(addr_v, 16)
-
+			#print("addr_v:", hex(addr_v), fini_num)
 			return fini_num, addr_v
 		return None, None
 
@@ -618,6 +624,7 @@ class PyGDB():
 						sys.stdout.flush()
 				except EOFError:
 					print('[+] ' + 'Got EOF while reading in interactive')
+					go.set()
 					break
 				except KeyboardInterrupt:
 					pass
@@ -655,9 +662,10 @@ class PyGDB():
 					
 					if data_all.strip() in ["q", "quit"]:
 						self.quit()
-						is_running = False
 						go.set()
 						break
+
+				is_running = False
 			except KeyboardInterrupt:
 				print('[+] ' + 'Interrupted')
 				self.interrupt_process()
@@ -862,6 +870,7 @@ class PyGDB():
 		if addr in self.hook_map.keys():
 			self.remove_hook(addr)
 
+		#print("call hook")
 		num, addr_v = self.set_bp(addr)
 		if hook_ret is not None and hook_ret != False:
 			if hook_ret == True or hook_ret == 1:
@@ -1249,8 +1258,10 @@ class PyGDB():
 			func_addr = func
 
 		pc = self.get_reg("pc")
+		#print("pc", hex(self.get_reg("pc")))
 		origin_sp = sp = self.get_reg("sp")
 
+		#print("pc-0", hex(self.get_reg("pc")), use_addr)
 		args_new = []
 		for item in args:
 			if type(item) == str:
@@ -1261,9 +1272,13 @@ class PyGDB():
 				args_new.append(item)
 
 		if "64" in self.arch:
-			sp -= sp%8
+			#sp -= sp%0x8
+			#align by 0x10
+			sp -= sp%0x10
 		else:
-			sp -= sp%4
+			#sp -= sp%0x4
+			#align by 0x8
+			sp -= sp%0x8
 
 		self.set_reg("sp", sp)
 		args = args_new
@@ -1362,7 +1377,8 @@ class PyGDB():
 
 				self.set_reg("sp", sp)
 
-		#self.interact()
+		#if func == "printf":
+		#	self.interact()
 
 		if len(self.hook_map.keys()) != 0:
 			self.run_until(next_addr)
@@ -1380,6 +1396,8 @@ class PyGDB():
 		#self.del_bp(bp_num)
 		if old_data != "":
 			nop_step_sz = len(nop_step_data)
+
+			#print(hex(use_addr), hex(nop_step_sz))
 			self.write_mem(use_addr-nop_step_sz, nop_step_data + old_data[nop_step_sz:])
 			self.set_reg("pc", use_addr-nop_step_sz)
 			self.stepi()
@@ -2922,8 +2940,8 @@ int main() {
 		self.inject_restore(addr)
 
 		origin_data = self.read_mem(addr, len(data))
-		self.write_mem(addr, target_code)
-		self.inject_patch_map[addr] = [target_code, origin_data]
+		self.write_mem(addr, data)
+		self.inject_patch_map[addr] = [data, origin_data]
 
 	def inject_patch_asm(self, addr, asm_code, show = False):
 		self.inject_restore(addr)
@@ -2964,8 +2982,8 @@ int main() {
 			asmInfo = asmInfos[0]
 			[asm_addr, asm_code] = asmInfo
 			asm_code = self.remove_pairs(asm_code, ["<", ">"])
-			#print(hex(asm_addr), ":", asm_code)
-			if asm_addr - addr > len(target_code):
+			print(hex(asm_addr), ":", asm_code)
+			if asm_addr - addr >= len(target_code):
 				end_addr = asm_addr
 				break
 			cur_addr = asmInfos[1][0]
@@ -3027,7 +3045,7 @@ int main() {
 			[asm_addr, asm_code] = asmInfo
 			asm_code = self.remove_pairs(asm_code, ["<", ">"])
 			#print(hex(asm_addr), ":", asm_code)
-			if asm_addr - addr > len(jmp_target_code):
+			if asm_addr - addr >= len(jmp_target_code):
 				end_addr = asm_addr
 				break
 			origin_code_list.append(asm_code)
