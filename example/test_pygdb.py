@@ -515,6 +515,7 @@ def test_inject():
 	pygdb.init_map_config(map_config)
 	pygdb.init_data_config(data_config)
 
+	print("run cmdline:  echo 1234|nc 0 17476")
 	args = [data_addr, 0x20]
 	pygdb.call(code_addr, args)
 

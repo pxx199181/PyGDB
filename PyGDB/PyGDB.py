@@ -1297,18 +1297,18 @@ class PyGDB():
 			nop_step_info = "nop"
 		
 
-		data = asm(asm_info ,vma = use_addr, arch = self.arch, os = "linux")
+		data = self._asm_(asm_info, use_addr)#, arch = self.arch, os = "linux")
 		#print data
-		disasm_info = disasm(data, vma = use_addr, arch = self.arch, os = "linux", byte = None)
+		disasm_info = self._disasm_(data, vma = use_addr)#, arch = self.arch, os = "linux", byte = None)
 		
+		#print(disasm_info)
 		next_step = 0
 		next_addr = 0
 
 		find_sign = False
-		asmInfos = []
-		for line in disasm_info.strip().split("\n"):
-			items = line.split(": ")
-			addr = int(items[0].strip(), 16)
+		asmInfos = self.parse_disasm(disasm_info, mode = 2)
+		for items in asmInfos:
+			addr = items[0]
 			info = (": ".join(items[1:])).strip()
 			if find_sign == True:
 				next_addr = addr
@@ -1321,7 +1321,7 @@ class PyGDB():
 
 		#print(next_step, hex(next_addr))
 		if next_addr == 0:
-			print("error")
+			print("error next_addr:", hex(next_addr))
 			return
 		#addr_hex = disasm_info.strip().split("\n")[1].split(":")[0].strip()
 		#next_addr = int(addr_hex, 16)
@@ -1588,7 +1588,7 @@ class PyGDB():
 		#self.hexdump(data = sockaddr_in)
 		#fd_tcp = socket(AF_INET, SOCK_STREAM, 0)
 		server = self.call("socket", [2, 1, 0])
-		print "server", hex(server)
+		#print "server", hex(server)
 
 		# setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &flag, len) 
 		SOL_SOCKET = 1
@@ -1946,12 +1946,30 @@ class PyGDB():
 
 		return content
 
-	def _asm_(self, asm_info, va):
+	def _asm_(self, asm_info, vma):
 		if io_wrapper == "zio":
 			print("please install pwntools")
 			return
 		context(arch = self.arch, bits = self.bits, os = 'linux')
-		return asm(asm_info, vma = va)
+
+		asm_info = asm_info.strip()
+		new_asm_code_list = []
+		for line in asm_info.strip().split("\n"):
+			line = line.strip()
+			if line.startswith(";") or line.startswith("//"):
+				continue
+			line = self.remove_pairs(line, ["<", ">"]).split(" #")[0].strip()
+			new_asm_code_list.append(line)
+		asm_info = "\n".join(new_asm_code_list)
+
+		return asm(asm_info, vma = vma)
+
+	def _disasm_(self, data, vma):
+		if io_wrapper == "zio":
+			print("please install pwntools")
+			return
+		context(arch = self.arch, bits = self.bits, os = 'linux')
+		return disasm(data, vma = vma, byte = None)
 
 	def patch_data(self, data, offset, content):
 		if offset + len(content) > len(data):
@@ -2421,7 +2439,7 @@ int main() {
 		#self.restore_context()
 	"""
 
-	def parse_disasm(self, asmInfo, parse = True):
+	def parse_disasm(self, asmInfo, parse = True, mode = 1):
 		asmInfo = asmInfo.strip("\n")
 		#print("asmInfo:")
 		#print(asmInfo)
@@ -2429,29 +2447,46 @@ int main() {
 		for line in asmInfo.split("\n"):
 			if len(line.strip()) == 0:
 				continue
-			items = line.split(" 0x")
-			if len(items) < 1:
-				break
-			line = (" 0x".join(items[1:])).strip()
-			if parse == False:
-				line = line.split(" #")[0]
-			items = line.split(":\t")
-			if len(items) < 2:
-				continue
-			#print(repr(items))
-			#print(items[0].replace("\t", " ").split(" ")[0])
-			addr = int(items[0].replace("\t", " ").split(" ")[0], 16)
-			info = ":\t".join(items[1:])
+			if mode == 1:
+				items = line.split(" 0x")
+				if len(items) < 1:
+					break
+				line = (" 0x".join(items[1:])).strip()
+				if parse == False:
+					line = line.split(" #")[0]
+				items = line.split(":\t")
+				if len(items) < 2:
+					continue
+				#print(repr(items))
+				#print(items[0].replace("\t", " ").split(" ")[0])
+				addr = int(items[0].replace("\t", " ").split(" ")[0], 16)
+				info = ":\t".join(items[1:])
+			else:
+				items = line.strip().split(": ")
+				if len(items) < 2:
+					continue
+				addr = int(items[0].strip(), 16)
+				info = (": ".join(items[1:])).strip()
 			ret_values.append([addr, info.strip()])
 		return ret_values 
 
-	def get_disasm(self, addr, length = 1, parse = True):
-		cmdline = "x/%di 0x%x"%(length, addr)
-		info = self.do_gdb_ret(cmdline)#.strip()
+	def get_disasm(self, addr, length = 1, parse = True, mode = "line"):
+		if length > 0x400 and length > addr:
+			mode = "code"
+			length = length - addr
+
+		if mode == "line":
+			cmdline = "x/%di 0x%x"%(length, addr)
+			info = self.do_gdb_ret(cmdline)#.strip()
+			mode = 1
+		else:
+			data = self.read_mem(addr, length)
+			info = self._disasm_(data, addr)
+			mode = 2
 		#print("cmdline:", cmdline)
 		#print("info:")
 		#print(info)
-		return self.parse_disasm(info, parse)
+		return self.parse_disasm(info, parse, mode)
 
 	def get_backtrace(self, level = None):
 		#self.interact()
@@ -2811,17 +2846,21 @@ int main() {
 		if type(addr) == str:
 			addr = self.get_symbol_value(addr)
 		old_addr = addr
+		last_addr = old_addr
 		while addr - old_addr < 0x10000:
-			content = self.execute("x/40i 0x%x"%addr)
-			for line in content.split("\n"):
-				items = line.strip().split(":\t")
-				if len(items) < 2:
+			#content = self.execute("x/40i 0x%x"%addr)
+			asmInfos = self.get_disasm(addr, 40)
+			for asm_item in asmInfos:
+				if len(asm_item) < 2:
 					break
-				cur_addr = int(items[0].strip().split(" ")[0], 16)
-				opcode = items[1].strip().split(" ")[0]
+				cur_addr = asm_item[0]
+				opcode = asm_item[1]
 				if opcode.startswith("ret"):
 					return cur_addr
 				addr = cur_addr
+			if addr == last_addr:
+				break
+			last_addr = addr
 
 	def invoke_s(self, func, *args, **kwrds):
 		self.save_context()
@@ -2894,6 +2933,7 @@ int main() {
 			line = line.strip()
 			if line.startswith(";") or line.startswith("//"):
 				continue
+			line = self.remove_pairs(line, ["<", ">"])
 			
 			new_asm_code_list.append(line)
 			line_strip = line.replace("\t", " ").strip()
@@ -2959,6 +2999,7 @@ int main() {
 			line = line.strip()
 			if line.startswith(";") or line.startswith("//"):
 				continue
+			line = self.remove_pairs(line, ["<", ">"])
 			
 			new_asm_code_list.append(line)
 			line_strip = line.replace("\t", " ").strip()
