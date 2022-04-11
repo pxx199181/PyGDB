@@ -13,6 +13,7 @@
         - test dup_io
         - test trace
         - test catch
+        - test inject_hook
     - More
 - Documention
 - Update log
@@ -266,6 +267,88 @@ def test_hook():
 
 
 	pygdb.make_tiny_elf(shellcode, "test.bin", base = 0x400000)
+
+	pygdb.interact()
+
+def test_inject_hook():
+
+	pygdb = PyGDB(target = "./test_hook")
+	#pygdb.hook(0x40054d, hook_test, [0, 0x40054d, "call printf",])
+	#pygdb.hook(0x400552, hook_out, [0, 0x400552, "cmp",])
+
+	pygdb.start()
+
+	#pygdb.dup_io(port = 12345, new_terminal = True)
+	#import time
+	#time.sleep(2)
+
+	code_addr = 0x8304000
+	data_addr = 0x8300000
+	map_config = {
+		data_addr:[0x1000, "rw"],
+		code_addr:[0x2000, "wx"],
+	}
+
+	pygdb.init_map_config(map_config)
+
+	globals_map = {}
+	bin_elf = ELF("./test_hook")
+	for key in bin_elf.plt.keys():
+		globals_map[key] = bin_elf.plt[key]
+	print("globals_map:", globals_map)
+	pygdb.config_inject_map(code_addr, 0x1000, globals_map)
+
+
+	#pygdb.config_inject_map(code_addr, 0x1000, globals_map)
+	pygdb.config_inject_map(0x400460, 0x4004A0 - 0x400460, globals_map)
+
+	#pygdb.interact()
+
+	message_data = "inject_hook\n\x00"
+	data_addr = pygdb.inject_hook_alloc(message_data)
+	asm_code = """
+	push rdi
+	push rsi
+	mov rdi, 0x%x
+	call printf
+	pop rsi
+	pop rdi
+	"""%(data_addr)
+	pygdb.inject_hook(0x40054d, asm_code)#, show = True)
+	
+	asm_code = "nop"
+	pygdb.inject_hook(0x40055A, asm_code)
+
+	pygdb.inject_patch_asm(0x4004ED, "nop")
+
+	pygdb.run_until(0x400562)
+
+	pygdb.inject_into_file("./test_hook", "./test_hook_p", base = 0x400000)
+
+	print("before remove_inject_hook")
+	pygdb.show_inject_info()
+
+	pygdb.remove_inject_hook(0x40054d)
+
+	print("")
+	print("after remove_inject_hook")
+	pygdb.show_inject_info()
+
+
+	pygdb.inject_hook_free(data_addr, len(message_data))
+	print("")
+	print("after inject_hook_free")
+	pygdb.show_inject_info()
+
+	pygdb.inject_restore(0x4004ED)
+	print("")
+	print("after inject_restore")
+	pygdb.show_inject_info()
+
+	pygdb.clear_inject_hook()
+	print("")
+	print("after clear_inject_hook")
+	pygdb.show_inject_info()
 
 	pygdb.interact()
 
@@ -639,6 +722,8 @@ if __name__ == "__main__":
 			test_catch()
 		elif sys.argv[1] == "inject":
 			test_inject()
+		elif sys.argv[1] == "inject_hook":
+			test_inject_hook()
 ```
 
 ### test x86/x64
@@ -687,6 +772,12 @@ run 'python test_pygdb.py catch'
 test inject demo.
 
 run 'python test_pygdb.py inject'
+
+
+### test inject_hook
+test inject_hook demo.
+
+run 'python test_pygdb.py inject_hook'
 
 ## More
 read the code!
@@ -755,4 +846,9 @@ TODO
 - (1). modify trace support thread
 - (2). remove some bugs
 - (3). modify trace example
+
+## 2022/4/11 Version 1.0.0
+- (1). add inject_hook functions
+- (2). remove some bugs (bugs in call)
+- (3). modify inject_hook example
 

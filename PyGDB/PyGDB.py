@@ -202,6 +202,14 @@ class PyGDB():
 		self.libc_base = None
 		self.heap_base = None
 
+		self.inject_hook_map = {}
+		self.inject_hook_addr = 0x0
+		self.inject_hook_base = 0x0
+		self.inject_hook_size = 0x0
+		self.inject_patch_map = {}
+		self.inject_free_map = {}
+		self.inject_hook_globals = {}
+
 		self.target_argv = ""
 
 		#self.gdb_path = misc.which('gdb-multiarch') or misc.which('gdb')
@@ -498,13 +506,24 @@ class PyGDB():
 	def catch_unload(self, regex_str):
 		return self.set_catch_bp(regex_str, "unload")
 
-	def get_code(self, pc = None, count = None):
+	def get_code(self, pc = None, count = None, below = False):
 		cmdline = ""
-		if pc is not None:
-			cmdline += " %d"%pc
-		if count is not None:
-			cmdline += " %d"%count
-		return self.do_pygdb_ret("get_code %s"%(cmdline))
+		if below:
+			if count is None:
+				count = 10
+			cmdline += "x/%di"%count
+			if pc is not None:
+				cmdline += " 0x%x"%pc
+			else:
+				cmdline += " $pc"
+
+			return self.do_gdb_ret(cmdline).strip("\n")
+		else:
+			if pc is not None:
+				cmdline += " %d"%pc
+			if count is not None:
+				cmdline += " %d"%count
+			return self.do_pygdb_ret("get_code %s"%(cmdline)).strip("\n")
 
 	def get_stack(self, sp = None, count = None):
 		cmdline = ""
@@ -660,7 +679,7 @@ class PyGDB():
 		with open("/proc/{}/maps".format(self.dbg_pid), "r") as maps:
 			return maps.read()
 
-	def libcbase(self):
+	def getlibcbase(self):
 		data = re.search(".*libc.*\.so", self.procmap())
 		if data :
 			libcaddr = data.group().split("-")[0]
@@ -716,23 +735,29 @@ class PyGDB():
 			self.code_base = self.codebase()
 		return self.code_base
 
-	def codebase(self):
-		if self.code_base is not None:
+	def codebase(self, update = False):
+		if update == False and self.code_base is not None:
 			return self.code_base
 		return self.codeaddr()[0]
 
-	def heap(self):
-		if self.heap_base is not None:
+	def heapbase(self, update = False):
+		if update == False and self.heap_base is not None:
 			return self.heap_base
 		return self.getheapbase()
 
-	def libc(self):
-		if self.libc_base is not None:
+	def libcbase(self, update = False):
+		if update == False and self.libc_base is not None:
 			return self.libc_base
-		return self.libcbase()
+		return self.getlibcbase()
 
-	def code(self):
-		return self.codebase()
+	def heap(self, update = False):
+		return self.heapbase(update)
+
+	def libc(self, update = False):
+		return self.libcbase(update)
+
+	def code(self, update = False):
+		return self.codebase(update)
 
 	def attach_name(self, binary_name, idx = 0):
 		b_pos = binary_name.rfind("/")
@@ -741,6 +766,7 @@ class PyGDB():
 		else:
 			exe_name = binary_name
 		data = do_command("pidof %s"%exe_name).split(" ")[idx]
+		#print("data:", data)
 		pid = int(data)
 		self.attach(pid)
 		return 
@@ -1251,7 +1277,7 @@ class PyGDB():
 				call_reg = "r%d"%len(args)
 			self.set_reg(call_reg, func_addr)
 			asm_info = ""
-			asm_info += "bl %s\n"%call_reg
+			asm_info += "blx %s\n"%call_reg
 			asm_info += "mov r0, r0"
 			nop_step_info = "mov r0, r0"
 		else:
@@ -1270,10 +1296,32 @@ class PyGDB():
 
 		data = asm(asm_info ,vma = use_addr, arch = self.arch, os = "linux")
 		#print data
-		disasm_info = disasm(data, vma = use_addr, arch = self.arch, os = "linux")
-		#print disasm_info
-		addr_hex = disasm_info.strip().split("\n")[1].split(":")[0].strip()
-		next_addr = int(addr_hex, 16)
+		disasm_info = disasm(data, vma = use_addr, arch = self.arch, os = "linux", byte = None)
+		
+		next_step = 0
+		next_addr = 0
+
+		find_sign = False
+		asmInfos = []
+		for line in disasm_info.strip().split("\n"):
+			items = line.split(": ")
+			addr = int(items[0].strip(), 16)
+			info = (": ".join(items[1:])).strip()
+			if find_sign == True:
+				next_addr = addr
+				break
+			else:
+				next_step += 1
+				if info.startswith("call ") or info.startswith("blx "):
+					find_sign = True
+					continue
+
+		#print(next_step, hex(next_addr))
+		if next_addr == 0:
+			print("error")
+			return
+		#addr_hex = disasm_info.strip().split("\n")[1].split(":")[0].strip()
+		#next_addr = int(addr_hex, 16)
 
 		nop_step_data = asm(nop_step_info, arch = self.arch, os = "linux")
 		#print "nop_step_info", nop_step_info
@@ -1316,7 +1364,10 @@ class PyGDB():
 		if len(self.hook_map.keys()) != 0:
 			self.run_until(next_addr)
 		else:
-			self.stepo()
+			for i in range(next_step):
+				#print("i:", i)
+				#print(self.get_code())
+				self.stepo()
 
 		cur_pc = self.get_reg("pc")
 		if cur_pc != next_addr:
@@ -1534,7 +1585,7 @@ class PyGDB():
 		#self.hexdump(data = sockaddr_in)
 		#fd_tcp = socket(AF_INET, SOCK_STREAM, 0)
 		server = self.call("socket", [2, 1, 0])
-		#print "server", server
+		print "server", hex(server)
 
 		# setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &flag, len) 
 		SOL_SOCKET = 1
@@ -1899,6 +1950,12 @@ class PyGDB():
 		context(arch = self.arch, bits = self.bits, os = 'linux')
 		return asm(asm_info, vma = va)
 
+	def patch_data(self, data, offset, content):
+		if offset + len(content) > len(data):
+			print("out of bound")
+			return data
+		return data[:offset] + content + data[offset + len(content):]
+
 	def patch_file(self, infile, patch_config, outfile = None, base = 0):
 		"""
 		patch_config:
@@ -1909,12 +1966,10 @@ class PyGDB():
 			offset: ["data", data],
 		}
 		"""
-		def patch_data(data, offset, content):
-			return data[:offset] + content + data[offset + len(content):]
 
 		file_data = self.readfile(infile)
 		for addr in patch_config:
-			print(addr)
+			#print(addr)
 			value = patch_config[addr]
 			data = ""
 			if type(value) == str:
@@ -1927,7 +1982,7 @@ class PyGDB():
 					data = value[1]
 				elif value[0] == "asm":
 					data = self._asm_(value[1], addr)
-			file_data = patch_data(file_data, addr - base, data)
+			file_data = self.patch_data(file_data, addr - base, data)
 
 		if outfile is None:
 			outfile = infile
@@ -2363,10 +2418,14 @@ int main() {
 		#self.restore_context()
 	"""
 
-	def get_disasm(self, addr, length = 1, parse = True):
-		info = self.do_gdb_ret("x/%di 0x%x"%(length, addr)).strip()
+	def parse_disasm(self, asmInfo, parse = True):
+		asmInfo = asmInfo.strip("\n")
+		#print("asmInfo:")
+		#print(asmInfo)
 		ret_values = []
-		for line in info.split("\n"):
+		for line in asmInfo.split("\n"):
+			if len(line.strip()) == 0:
+				continue
 			items = line.split(" 0x")
 			if len(items) < 1:
 				break
@@ -2374,12 +2433,22 @@ int main() {
 			if parse == False:
 				line = line.split(" #")[0]
 			items = line.split(":\t")
+			if len(items) < 2:
+				continue
 			#print(repr(items))
 			#print(items[0].replace("\t", " ").split(" ")[0])
 			addr = int(items[0].replace("\t", " ").split(" ")[0], 16)
 			info = ":\t".join(items[1:])
 			ret_values.append([addr, info.strip()])
 		return ret_values 
+
+	def get_disasm(self, addr, length = 1, parse = True):
+		cmdline = "x/%di 0x%x"%(length, addr)
+		info = self.do_gdb_ret(cmdline)#.strip()
+		#print("cmdline:", cmdline)
+		#print("info:")
+		#print(info)
+		return self.parse_disasm(info, parse)
 
 	def get_backtrace(self, level = None):
 		#self.interact()
@@ -2778,3 +2847,284 @@ int main() {
 	def make_tiny_elf(self, shellocde, outfile = None, base = None, mode = 32):
 		elf_bin = PyGDB_make_tiny_elf(shellocde, outfile, base, mode)
 		return elf_bin
+
+	def remove_pairs(self, line, pairs = ["<", ">"]):
+		while True:
+			pos_b = line.find(pairs[0], 0)
+			if pos_b == -1:
+				break
+			pos_e = line.find(pairs[1], pos_b + 1)
+			if pos_e == -1:
+				break
+			line = line[:pos_b] + line[pos_e+1:]
+		return line
+
+	def inject_restore(self, addr):
+		if addr in self.inject_hook_map.keys():
+			self.remove_inject_hook(addr)
+		elif addr in self.inject_patch_map.keys():
+			[_, origin_data] = self.inject_patch_map[addr]
+			self.write_mem(addr, origin_data)
+			self.inject_patch_map.pop(addr)
+
+	def inject_patch_data(self, addr, data):
+		self.inject_restore(addr)
+
+		origin_data = self.read_mem(addr, len(data))
+		self.write_mem(addr, target_code)
+		self.inject_patch_map[addr] = [target_code, origin_data]
+
+	def inject_patch_asm(self, addr, asm_code, show = False):
+		self.inject_restore(addr)
+
+		new_asm_code_list = []
+		for line in asm_code.strip().split("\n"):
+			line = line.strip()
+			if line.startswith(";") or line.startswith("//"):
+				continue
+			
+			new_asm_code_list.append(line)
+			line_strip = line.replace("\t", " ").strip()
+			if line_strip.startswith("call "):
+				name = line_strip.replace("call ", "").strip()
+				if name.startswith("0x") or name.isdigit():
+					continue
+				else:
+					if name in self.inject_hook_globals.keys():
+						name_addr = self.inject_hook_globals[name]
+					else:
+						name_addr = self.get_symbol_value(name)
+					line = "call 0x%x"%name_addr
+					new_asm_code_list[-1] = line
+		#new_asm_code = "\n".join(new_asm_code_list)
+
+		new_asm_code = "\n".join(new_asm_code_list)
+
+		target_code = self._asm_(new_asm_code, addr)
+
+		end_addr = 0
+		origin_code_list = []
+		cur_addr = addr
+		while True:
+			asmInfos = self.get_disasm(cur_addr, 2, parse = False)
+			if len(asmInfos) < 2:
+				break
+			asmInfo = asmInfos[0]
+			[asm_addr, asm_code] = asmInfo
+			asm_code = self.remove_pairs(asm_code, ["<", ">"])
+			#print(hex(asm_addr), ":", asm_code)
+			if asm_addr - addr > len(target_code):
+				end_addr = asm_addr
+				break
+			cur_addr = asmInfos[1][0]
+
+		if end_addr != 0:
+			use_size = end_addr - addr
+			origin_data = self.read_mem(addr, use_size)
+			#intel mode
+			target_code = target_code.ljust(use_size, '\x90')
+			self.write_mem(addr, target_code)
+			self.inject_patch_map[addr] = [target_code, origin_data]
+		else:
+			print("inject hook error")
+			return
+
+	def inject_hook(self, addr, asm_code, show = False):
+		"""
+		self.inject_hook_map = {}
+		self.inject_hook_addr = 0x0
+		self.inject_hook_base = 0x0
+		self.inject_hook_size = 0x0
+		self.inject_patch_map = {}
+		self.inject_free_map  = {}
+		self.inject_hook_globals = {}
+		"""
+		if addr in self.inject_hook_map.keys():
+			self.remove_inject_hook(addr)
+
+		new_asm_code_list = []
+		for line in asm_code.strip().split("\n"):
+			line = line.strip()
+			if line.startswith(";") or line.startswith("//"):
+				continue
+			
+			new_asm_code_list.append(line)
+			line_strip = line.replace("\t", " ").strip()
+			if line_strip.startswith("call "):
+				name = line_strip.replace("call ", "").strip()
+				if name.startswith("0x") or name.isdigit():
+					continue
+				else:
+					if name in self.inject_hook_globals.keys():
+						name_addr = self.inject_hook_globals[name]
+					else:
+						name_addr = self.get_symbol_value(name)
+					line = "call 0x%x"%name_addr
+					new_asm_code_list[-1] = line
+		#new_asm_code = "\n".join(new_asm_code_list)
+
+		jmp_target_asm 	= "jmp 0x%x"%(self.inject_hook_addr)
+		jmp_target_code = self._asm_(jmp_target_asm, addr)
+
+		asmInfos = self.get_disasm(addr, 8, parse = False)
+		end_addr = 0
+		origin_code_list = []
+		for idx in range(len(asmInfos)):
+			asmInfo = asmInfos[idx]
+			[asm_addr, asm_code] = asmInfo
+			asm_code = self.remove_pairs(asm_code, ["<", ">"])
+			#print(hex(asm_addr), ":", asm_code)
+			if asm_addr - addr > len(jmp_target_code):
+				end_addr = asm_addr
+				break
+			origin_code_list.append(asm_code)
+
+		if end_addr != 0:
+			origin_data = self.read_mem(addr, len(jmp_target_code))
+
+			jmp_back_asm = "jmp 0x%x"%end_addr
+
+			new_asm_code_list += origin_code_list + [jmp_back_asm]
+			new_asm_code = "\n".join(new_asm_code_list)
+			if show:
+				print("inject code:")
+				print("-"*0x10)
+				print(new_asm_code)
+				print("-"*0x10)
+
+			patch_code = self._asm_(new_asm_code, self.inject_hook_addr)
+
+			patch_addr = self.inject_hook_alloc(patch_code)
+			if patch_addr != 0:
+
+				if show:
+					print("origin:", hex(addr))
+					print("-"*0x10)
+					print(self.get_code(addr, 0x5, below = True))
+					print("-"*0x10)
+				self.write_mem(addr, jmp_target_code)
+				hook_item = [patch_addr, patch_code, addr, origin_data]
+				
+				if show:
+					print("after:", hex(addr))
+					print("-"*0x10)
+					print(self.get_code(addr, 0x5, below = True))
+					print("-"*0x10)
+					print("jmp_back_addr:", hex(end_addr))
+					print("-"*0x10)
+					print(self.get_code(end_addr, 0x5, below = True))
+					print("-"*0x10)
+
+					print("patch_addr:", hex(patch_addr))
+					print("-"*0x10)
+					print(self.get_code(patch_addr, 0x10, below = True))
+					print("-"*0x10)
+				self.inject_hook_map[addr] = hook_item
+				self.inject_patch_map[addr] = [jmp_target_code, origin_data]
+		else:
+			print("inject hook error")
+			return
+
+	def remove_inject_hook(self, addr):
+		if addr in self.inject_hook_map.keys():
+			hook_item = self.inject_hook_map[addr]
+			[patch_addr, patch_code, origin_addr, origin_data] = hook_item
+			self.write_mem(addr, origin_data)
+			self.inject_hook_free(patch_addr, len(patch_code))
+			self.inject_hook_map.pop(addr)
+			self.inject_patch_map.pop(addr)
+
+	def clear_inject_hook(self):
+		for key in self.inject_hook_map.keys():
+			self.remove_inject_hook(key)
+
+
+	def inject_hook_alloc(self, data):
+		if self.inject_hook_size >= len(data):
+			addr = self.inject_hook_addr
+			origin_data = self.read_mem(self.inject_hook_addr, len(data))
+			self.write_mem(self.inject_hook_addr, data)
+			self.inject_hook_addr += len(data)
+			self.inject_hook_size -= len(data)
+			self.inject_patch_map[addr] = [data, origin_data]
+			return addr
+		else:
+			print("inject area is not enough")
+			return 0
+
+	def inject_consolidate(self):
+		last_count = len(self.inject_free_map.keys())
+		while last_count > 0:
+			for key in self.inject_free_map.keys():
+				size = self.inject_free_map[key]
+				self.inject_hook_free(key, size)
+			count = len(self.inject_free_map.keys())
+			if count == last_count:
+				break
+			last_count = count
+
+	def inject_hook_free(self, addr, size):
+		if addr in self.inject_patch_map.keys():
+			self.inject_patch_map.pop(addr)
+
+		if addr < self.inject_hook_addr and addr + size == self.inject_hook_addr:
+			self.inject_hook_size += self.inject_hook_addr - addr
+			self.inject_hook_addr = addr
+			
+			if addr not in self.inject_free_map.keys():
+				self.inject_consolidate()
+			else:
+				#print("pop here1")
+				self.inject_free_map.pop(addr)
+		else:
+			if addr not in self.inject_free_map.keys():
+				self.inject_free_map[addr] = size
+				#print(self.inject_free_map)
+				self.inject_consolidate()
+				#print(self.inject_free_map)
+			elif addr < self.inject_hook_base or addr > self.inject_hook_addr + self.inject_hook_size:
+				#print("pop here2")
+				self.inject_free_map.pop(addr)
+
+	def config_inject_map(self, addr, size, globals_map = {}):
+		self.inject_hook_base = addr
+		self.inject_hook_size = size
+		self.inject_hook_addr = addr
+		for key in globals_map.keys():
+			self.inject_hook_globals[key] = globals_map[key]
+
+	def inject_into_file(self, infile, outfile = None, base = 0):
+		file_data = self.readfile(infile)
+		for addr in self.inject_patch_map.keys():
+			#print(addr)
+			[data, _] = self.inject_patch_map[addr]
+			file_data = self.patch_data(file_data, addr - base, data)
+
+		if outfile is None:
+			outfile = infile
+		self.writefile(outfile, file_data)
+		self.run_cmd("chmod +x %s"%outfile)
+
+	def show_inject_info(self):
+		print("inject_hook_map:")
+		for key in self.inject_hook_map.keys():
+			hook_item = self.inject_hook_map[key]
+			[patch_addr, patch_code, origin_addr, origin_data] = hook_item
+			print(hex(key), ":", hex(patch_addr), hex(len(patch_code)), hex(origin_addr), hex(len(origin_data)))
+
+		print("inject_patch_map:")
+		for key in self.inject_patch_map.keys():	
+			patch_item = self.inject_patch_map[key]
+			[patch_data, origin_data] = patch_item
+			print(hex(key), ":", hex(len(patch_data)), hex(len(origin_data)))
+
+		print("inject_free_map:")
+		for key in self.inject_free_map.keys():	
+			size = self.inject_free_map[key]
+			print(hex(key), ":", hex(size))
+
+		print("inject_hook_base:", hex(self.inject_hook_base))
+		print("inject_hook_size:", hex(self.inject_hook_size))
+		print("inject_hook_addr:", hex(self.inject_hook_addr))
+
+
