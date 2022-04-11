@@ -279,17 +279,21 @@ def test_trace():
 
 
 def test_catch():
-	def hook_syscall(pygdb, bpType, syscall_name):
+	def hook_syscall(pygdb, bpType, syscall_name, input_arg):
+		if syscall_name == "write":
+			return
 		if bpType == "OnEnter":
 			pc = pygdb.get_reg("pc")
 			print(hex(pc), "enter", syscall_name)
 			if syscall_name == "open":
 				rdi = pygdb.get_reg("rdi")
 				name = pygdb.readString(rdi)
-				print("open", name)
+				print("open - %s"%input_arg, name)
 			elif syscall_name == "read":
 				rdx = pygdb.get_reg("rdx")
-				print("read size", hex(rdx))
+				print("read - %s size"%input_arg, hex(rdx))
+			else:
+				print(syscall_name + " - %s"%input_arg)
 		elif bpType == "OnRet":
 			pc = pygdb.get_reg("pc")
 			print(hex(pc), "return", syscall_name)
@@ -304,7 +308,7 @@ def test_catch():
 
 	pygdb = PyGDB(target = "./test_hook")
 	pygdb.hook_catch_syscall("open", hook_syscall, ["open"])
-	addr_v = pygdb.hook_catch_syscall("read", hook_syscall, ["read"])
+	addr_v = pygdb.hook_catch_syscall("", hook_syscall, ["all"])
 
 	pygdb.hook_catch_load("", hook_image, ["load"])
 	pygdb.hook_catch_unload("", hook_image, ["unload"])

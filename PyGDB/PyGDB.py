@@ -1050,17 +1050,20 @@ class PyGDB():
 						info = "unkown"
 						if catch_type in ["syscall"]:
 							#infos = re.findall("\(* syscall *\)", msg)
-							info_use = self.cut_str(msg, " (", " syscall ")
+							info_use = self.cut_str(msg, " (", " syscall ").strip()
+							syscall_name = self.cut_str(msg, " syscall ", ")").strip()
 							if "call to" in info_use:
 								info = "OnEnter"
 							elif "returned from" in info_use:
 								info = "OnRet"
+							args = [syscall_name] + args
+							#print(info, syscall_name)
 						elif catch_type in ["load", "unload"]:
-							info_use = self.cut_str(msg, "loaded ", "\n")
+							info_use = self.cut_str(msg, "loaded ", "\n").strip()
 							if info_use != "":
 								info = info_use.split("loaded ")[-1].strip()
 						elif catch_type in ["signal"]:
-							info_use = self.cut_str(msg, "(signal ", ")")
+							info_use = self.cut_str(msg, "(signal ", ")").strip()
 							if info_use != "":
 								info = info_use.strip()
 						ret_v = handler(self, info, *args)
