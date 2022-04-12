@@ -1,0 +1,3 @@
+break *0x4008b0
+break *0x400830
+break *0x400c0a

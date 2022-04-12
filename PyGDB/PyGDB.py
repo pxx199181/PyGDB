@@ -236,15 +236,28 @@ class PyGDB():
 				self.bits = 32
 
 		self.arch_args = []
+		self.context_regs = []
 		if self.arch.lower() in ["arch64", "arm"]:
 			self.peda_file = os.path.join(peda_dir, "peda-arm.py")
 			
 			for i in range(13):
 				self.arch_args.append("r%d"%i)
+
+			self.context_regs = ["sp"]
+			if "64" in self.arch:
+				for i in range(13):
+					self.context_regs.append("r%d"%i)
+			else:
+				for i in range(16):
+					self.context_regs.append("r%d"%i)
+			self.context_regs.append("cpsr")
 		else:
 			self.peda_file = os.path.join(peda_dir, "peda-intel.py")
 			if "64" in self.arch:
 				self.arch_args = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"]
+				self.context_regs = ["rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rbp", "rsp", "rip", "r8", "r9", "r11", "r12", "r13", "r14", "r15"]
+			else:
+				self.context_regs = ["eax", "ebx", "ecx", "edx", "esi", "edi", "ebp", "esp", "eip"]
 
 		self.gdb_argv = []
 		self.gdb_argv.append(self.gdb_path)
@@ -344,6 +357,27 @@ class PyGDB():
 		result = self.do_gdb_ret(cmdline)
 		self.dbg_pid = self.get_dbg_pid()
 		self.target_argv = "attach %d"%self.dbg_pid
+
+	def do_pygdb_syn(self):
+		while True:
+			regs = self.get_regs()
+			if type(regs) != dict:
+				self.do_pygdb_trim()
+			else:
+				break
+
+	def do_pygdb_trim(self):
+		begin_s = "pyCmd-B{"
+		end_s = "}pyCmd-E"
+		#self.io.recvuntil(begin_s)
+		#data = self.io.recvuntil("}pyCmd-E", drop = True)
+		while True:
+			data = self.io.recvuntil(end_s)
+			pos = data.rfind(begin_s)
+			if pos != -1:
+				#print "data:", data
+				data = data[pos + len(begin_s):-len(end_s)]
+				break
 			 
 	def do_pygdb_ret(self, cmdline):
 		self.io.sendline("pyCmdRet %s"%cmdline)
@@ -669,8 +703,80 @@ class PyGDB():
 			except KeyboardInterrupt:
 				print('[+] ' + 'Interrupted')
 				self.interrupt_process()
+				self.NopOp()
 		while t.is_alive():
 			t.join(timeout = 0.1)
+
+	def show_context(self):
+		split_str = "-"*0x20
+		regs = self.get_regs()
+		if type(regs) == dict:
+			print("[%sreg%s]"%(split_str, split_str))
+			for reg in self.context_regs:
+				print("%-3s: %s"%(reg.upper(), hex(regs[reg])))
+
+		codeInfo = self.get_code(count = 8)
+		if type(codeInfo) == str:
+			print("[%scode%s]"%(split_str, split_str))
+			cur_sp = self.get_reg("sp")
+			print(codeInfo)
+
+		stackInfo = self.get_stack(cur_sp, 8)
+		if type(stackInfo) == str:
+			print("[%sstack%s]"%(split_str, split_str))
+			print(stackInfo)
+
+	def interact_pygdb(self, prompt = "~> ", simple = True):
+
+		last_pc = self.get_reg("pc")
+		last_data = ""
+
+		self.show_context()
+		while True:
+			try:
+				data = raw_input(prompt).strip()
+				if len(data) == 0:
+					data = last_data
+				if len(data) == 0:
+					continue
+
+				last_data = data
+
+				if "quit".startswith(data):
+					break
+				elif "continue".startswith(data):
+					#print("do continue")
+					pc, msg = self.Continue()
+					#print("pc", hex(pc), msg)
+					if pc == -1:
+						self.do_pygdb_syn()
+					msg = ""
+				elif "context".startswith(data):
+					self.show_context()
+					continue
+				elif "kill".startswith(data):
+					msg = self.do_gdb_ret(data)
+					break
+				else:
+					msg = self.do_gdb_ret(data)
+					sign, pc = self.DealHook(msg)
+
+				cur_pc = self.get_reg("pc")
+				if cur_pc != last_pc:
+					self.show_context()
+				last_pc = cur_pc
+
+				if len(msg) != 0:
+					sys.stdout.write(msg)
+					sys.stdout.flush()
+		
+			except KeyboardInterrupt:
+				print('[+] ' + 'Interrupted')
+				self.interrupt_process()
+				self.do_pygdb_syn()
+				self.NopOp()
+				self.show_context()
+
 
 	def procmap(self):
 		if self.dbg_pid is None:
@@ -1008,6 +1114,7 @@ class PyGDB():
 			except KeyboardInterrupt:
 				print('[+] ' + 'Interrupted')
 				self.interrupt_process()
+				self.NopOp()
 				return -1
 
 	def DealHook(self, msg):
@@ -1081,10 +1188,14 @@ class PyGDB():
 			return False, pc
 
 	def go(self):
-		self.Continue()
+		return self.Continue()
 
 	def Go(self):
-		self.Continue()
+		return self.Continue()
+
+	def NopOp(self):
+		#self.do_pygdb_ret("info terminal")
+		pass
 
 	def Continue(self):
 		while True:
@@ -1092,11 +1203,14 @@ class PyGDB():
 				msg = self._continue()
 				sign, pc = self.DealHook(msg)
 				if sign == False:
-					return pc
+					if "Program received signal SIGINT" in msg:
+						continue
+					return pc, msg
 			except KeyboardInterrupt:
 				print('[+] ' + 'Interrupted')
 				self.interrupt_process()
-				return -1
+				self.NopOp()
+				return -1, "Interrupted"
 
 	def StepI(self):
 		if True:
@@ -1107,6 +1221,7 @@ class PyGDB():
 			except KeyboardInterrupt:
 				print('[+] ' + 'Interrupted')
 				self.interrupt_process()
+				self.NopOp()
 				return -1
 
 	def StepO(self):
@@ -1387,6 +1502,8 @@ class PyGDB():
 				#print("i:", i)
 				#print(self.get_code())
 				self.stepo()
+			if self.get_reg("pc") != next_addr:
+				self.run_until(next_addr)
 
 		cur_pc = self.get_reg("pc")
 		if cur_pc != next_addr:
@@ -2219,8 +2336,8 @@ char* mov_addr_rax(void* data) {
 				asm_code = asm_code.replace("\\n", "\n")
 				asm_code = asm_code.replace(";", "\n")
 
-				print("asm_code:")
-				print(repr(asm_code))
+				#print("asm_code:")
+				#print(repr(asm_code))
 				inject_asm = self.gen_inject_asm(asm_code)
 
 				define_content = inject_asm
@@ -2365,7 +2482,7 @@ int main() {
 			self.priv_globals['lib_base'][libname] = int(libaddr, 16)
 
 			lib_path = data.group().split(" ")[-1]
-			print("lib_path:", lib_path)
+			#print("lib_path:", lib_path)
 			self.priv_globals['lib_path'][libname] = lib_path
 			return int(libaddr, 16)
 		else :
@@ -2919,17 +3036,20 @@ int main() {
 			line = line[:pos_b] + line[pos_e+1:]
 		return line
 
-	def inject_remove_patch(self, addr):
+	def remvoe_inject_patch(self, addr):
 		if addr in self.inject_patch_map.keys():
-			[_, origin_data] = self.inject_patch_map[addr]
+			[target_data, origin_data] = self.inject_patch_map[addr]
 			self.write_mem(addr, origin_data)
 			self.inject_patch_map.pop(addr)
+			#self.inject_hook_free(addr, len(target_data))
+			return len(target_data)
+		return 0
 
 	def inject_restore(self, addr):
 		if addr in self.inject_hook_map.keys():
 			self.remove_inject_hook(addr)
 		elif addr in self.inject_patch_map.keys():
-			self.inject_remove_patch(addr)
+			self.remvoe_inject_patch(addr)
 			"""
 			[_, origin_data] = self.inject_patch_map[addr]
 			self.write_mem(addr, origin_data)
@@ -2982,7 +3102,8 @@ int main() {
 			asmInfo = asmInfos[0]
 			[asm_addr, asm_code] = asmInfo
 			asm_code = self.remove_pairs(asm_code, ["<", ">"])
-			print(hex(asm_addr), ":", asm_code)
+			if show:
+				print(hex(asm_addr), ":", asm_code)
 			if asm_addr - addr >= len(target_code):
 				end_addr = asm_addr
 				break
@@ -3104,12 +3225,17 @@ int main() {
 			self.inject_hook_map.pop(addr)
 			#self.inject_patch_map.pop(addr)
 			#self.write_mem(addr, origin_data)
-			self.inject_remove_patch(addr)
+			self.remvoe_inject_patch(addr)
 
 	def clear_inject_hook(self):
 		for key in self.inject_hook_map.keys():
 			self.remove_inject_hook(key)
 
+	def clear_inject_patch(self):
+		self.clear_inject_hook()
+		for key in self.inject_patch_map.keys():
+			self.inject_hook_free(key)
+			self.remvoe_inject_patch(key)
 
 	def inject_hook_alloc(self, data):
 		if self.inject_hook_size >= len(data):
@@ -3135,11 +3261,19 @@ int main() {
 				break
 			last_count = count
 
-	def inject_hook_free(self, addr, size):
+	def inject_hook_free(self, addr, size = None):
+		#print("      free in:", hex(addr), hex(size))
 		if addr in self.inject_patch_map.keys():
 			#self.inject_patch_map.pop(addr)
-			self.inject_remove_patch(addr)
+			use_size = self.remvoe_inject_patch(addr)
+			if size is None or size != use_size:
+				size = use_size
 
+		if size is None:
+			#print("error size")
+			return
+
+		#print("      free on:", hex(addr), hex(size))
 		if addr < self.inject_hook_addr and addr + size == self.inject_hook_addr:
 			self.inject_hook_size += self.inject_hook_addr - addr
 			self.inject_hook_addr = addr
@@ -3150,6 +3284,9 @@ int main() {
 				#print("pop here1")
 				self.inject_free_map.pop(addr)
 		else:
+			if addr >= self.inject_hook_addr:
+				#print("dup free", hex(addr))
+				return
 			if addr not in self.inject_free_map.keys():
 				self.inject_free_map[addr] = size
 				#print(self.inject_free_map)

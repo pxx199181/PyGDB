@@ -122,6 +122,8 @@ def test_hook():
 
 	pygdb.start()
 
+	pygdb.interact_pygdb()
+
 	#pygdb.Continue()
 	#pygdb.clear_hook()
 	#pygdb.stepi()
