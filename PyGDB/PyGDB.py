@@ -185,7 +185,10 @@ class PyGDB():
 		if target is not None:
 			while os.path.islink(target):
 				target = os.path.abspath(os.path.join(os.path.dirname(target), os.path.expanduser(os.readlink(target))))
-		
+			if os.path.exists(target) and os.access(target, os.X_OK) == False:
+				self.run_cmd("chmod +x %s"%target)
+
+
 		self.globals = {}
 		self.priv_globals = {}
 		self.priv_globals["lib_base"] = {}
@@ -2043,7 +2046,6 @@ class PyGDB():
 			raise Exception("error")
 
 		if auto_gen:
-			import os
 			if os.path.exists(cfile_name):
 				os.unlink(cfile_name)
 			if os.path.exists(obj_name):
@@ -2999,8 +3001,9 @@ int main() {
 
 	def invoke_s(self, func, *args, **kwrds):
 		self.save_context()
-		func(*args, **kwrds)
+		result = func(*args, **kwrds)
 		self.restore_context()
+		return result
 
 	def __getattr__(self, key):
 		#print "__getattr__", key
