@@ -721,13 +721,14 @@ class PyGDB():
 		codeInfo = self.get_code(count = 8)
 		if type(codeInfo) == str:
 			print("[%scode%s]"%(split_str, split_str))
-			cur_sp = self.get_reg("sp")
 			print(codeInfo)
 
-		stackInfo = self.get_stack(cur_sp, 8)
-		if type(stackInfo) == str:
-			print("[%sstack%s]"%(split_str, split_str))
-			print(stackInfo)
+		cur_sp = self.get_reg("sp")
+		if type(cur_sp) != str:
+			stackInfo = self.get_stack(cur_sp, 8)
+			if type(stackInfo) == str:
+				print("[%sstack%s]"%(split_str, split_str))
+				print(stackInfo)
 
 	def interact_pygdb(self, prompt = "~> ", simple = True):
 
