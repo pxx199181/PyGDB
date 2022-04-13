@@ -1404,6 +1404,7 @@ class PyGDB():
 		#print("pc", hex(self.get_reg("pc")))
 		origin_sp = sp = self.get_reg("sp")
 
+		#self.interact()
 		#print("pc-0", hex(self.get_reg("pc")), use_addr)
 		args_new = []
 		for item in args:
@@ -2692,7 +2693,7 @@ int main() {
 		else:
 			return "unkown_%d"%skip_sign
 
-	def trace(self, b_addr = None, e_addr = None, logPattern = "trace", record_maps = [], skip_list = [], byThread = False, asmCode = True, appendMode = False, is_pie = False, rec_base = 0x0, skip_loops = True, trace_handler = None, function_mode = False, show = True, oneThread = True):
+	def trace(self, b_addr = None, e_addr = None, logPattern = "trace", record_maps = [], skip_list = [], byThread = False, asmCode = True, appendMode = False, is_pie = False, rec_base = 0x0, skip_loops = True, trace_handler = None, function_mode = False, show = True, oneThread = True, level_mode = True, start_level = 0, level_str = "  "):
 
 		if b_addr is not None:
 			b_addr = self.real_addr(b_addr, is_pie)
@@ -2704,10 +2705,19 @@ int main() {
 			print("run_until 0x%x -> 0x%x"%(pc, b_addr))
 			pc = self.run_until(b_addr)
 
-		if function_mode == True and oneThread == False:
-			print("function_mode only support oneThread")
+		if level_mode == True and oneThread == False:
+			print("level_mode only support oneThread")
 			self.interact()
 			return ;
+
+		if asmCode == False:
+			level_mode = False
+
+		if level_mode == False:
+			start_level = 0
+
+		if level_str is None:
+			level_str = "  "
 
 		if oneThread:
 			thread_id, _ = self.get_thread_id()
@@ -2730,8 +2740,9 @@ int main() {
 		logfile_list = []
 
 		end_status = False
-		func_level = 0
-		print("----------------- trace start -----------------")
+		func_level = start_level
+		split_str = "-"*0x20
+		print("%s[trace start]%s"%(split_str, split_str))
 		while True:
 			try:
 				info = "0x%x"%(pc-rec_base)
@@ -2739,19 +2750,27 @@ int main() {
 					info_items = self.get_disasm(pc, 1, False)
 					[addr, asmInfo] = info_items[0]
 					
-					if function_mode == True:
-						if asmInfo.startswith("call"):
-							info = "  "*func_level + info + ": " + asmInfo
-							func_level += 1
-						elif asmInfo.startswith("ret") or asmInfo.startswith("repz ret"):
-							info = "  "*func_level + info + ": " + asmInfo
-							func_level -= 1
-							if func_level < 0:
-								func_level = 0
-						else:
-							info = ""	
+					asm_prefix = ""
+					if level_mode or function_mode:
+						if level_mode:
+							asm_prefix = level_str*func_level
+
+						if asmInfo.startswith("call") or asmInfo.startswith("blx"):
+							if level_mode:
+								func_level += 1
+						elif asmInfo.startswith("ret") or asmInfo.startswith("repz ret") or asmInfo.startswith("mov pc,"):
+							if level_mode:
+								func_level -= 1
+								if func_level < 0:
+									func_level = 0
+						elif function_mode:
+							info = ""
+							asmInfo = ""
+					if len(asmInfo) != 0:
+						#print("func_level:", func_level)
+						info = asm_prefix + info + ": " + asmInfo
 					else:
-						info += ": " + asmInfo
+						info = ""
 
 				if logPattern is not None:
 					if byThread == True:
@@ -2821,17 +2840,18 @@ int main() {
 				if skip_sign > 0:
 					next_addr = self.get_backtrace(2)[1]
 
-					if function_mode:
-						func_level -= 1
-						if func_level < 0:
-							func_level = 0
-					else:
+					if function_mode == False:
 						skip_chains = " [0x%x -> 0x%x -> 0x%x]"%(last_addr, pc, next_addr)
-						info = "-- skip chains -> %s%s"%(self.skip_reason(skip_sign), skip_chains)
+						info = level_str*func_level + "-- skip chains -> %s%s"%(self.skip_reason(skip_sign), skip_chains)
 						if show:
 							print(info)
 						if logfile is not None:
 							self.appendfile(logfile, info + "\n")	
+					
+					if level_mode:
+						func_level -= 1
+						if func_level < 0:
+							func_level = 0
 						
 					if next_addr == -1:
 						print("next_addr:", -1)
@@ -2871,7 +2891,7 @@ int main() {
 				#self.interrupt_process()
 				self.interact()
 				break
-		print("----------------- trace end -----------------")
+		print("%s[trace end]%s"%(split_str, split_str))
 
 
 	def get_target(self):
