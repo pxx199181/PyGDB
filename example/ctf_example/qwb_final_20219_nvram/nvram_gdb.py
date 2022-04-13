@@ -264,7 +264,7 @@ def main():
         regs[20] = regs_map["ss"]
         return regs
 
-    show = raw_input("show details?(1:yes, 0:no): ")
+    show = raw_input("show details?(1:yes, 0:no): ").strip()
     if show == "1":
     	show = True
     else:
