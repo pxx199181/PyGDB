@@ -710,25 +710,36 @@ class PyGDB():
 		while t.is_alive():
 			t.join(timeout = 0.1)
 
-	def show_context(self):
-		split_str = "-"*0x20
+	def context_registers(self, split_len = 0x20):
+		split_str = "-"*split_len
+		print("[%sreg%s]"%(split_str, split_str))
 		regs = self.get_regs()
 		if type(regs) == dict:
-			print("[%sreg%s]"%(split_str, split_str))
 			for reg in self.context_regs:
 				print("%-3s: %s"%(reg.upper(), hex(regs[reg])))
 
-		codeInfo = self.get_code(count = 8)
+
+	def context_code(self, count = 8, split_len = 0x20):
+		split_str = "-"*split_len
+		print("[%scode%s]"%(split_str, split_str))
+		codeInfo = self.get_code(count = count)
 		if type(codeInfo) == str:
-			print("[%scode%s]"%(split_str, split_str))
 			print(codeInfo)
 
+
+	def context_stack(self, count = 8, split_len = 0x20):
+		split_str = "-"*split_len
+		print("[%sstack%s]"%(split_str, split_str))
 		cur_sp = self.get_reg("sp")
 		if type(cur_sp) != str:
-			stackInfo = self.get_stack(cur_sp, 8)
+			stackInfo = self.get_stack(cur_sp, count)
 			if type(stackInfo) == str:
-				print("[%sstack%s]"%(split_str, split_str))
 				print(stackInfo)
+
+	def show_context(self, count = 8, split_len = 0x20):
+		self.context_registers(split_len)
+		self.context_code(count, split_len)
+		self.context_stack(count, split_len)
 
 	def interact_pygdb(self, prompt = "~> ", simple = True):
 
@@ -748,12 +759,14 @@ class PyGDB():
 
 				if "quit".startswith(data):
 					break
+				elif len(data) > 2 and "gdb_interact".startswith(data):
+					self.interact()
 				elif "continue".startswith(data):
 					#print("do continue")
-					pc, msg = self.Continue()
+					pc, msg = self.Continue(syn = True)
 					#print("pc", hex(pc), msg)
-					if pc == -1:
-						self.do_pygdb_syn()
+					#if pc == -1:
+					#	self.do_pygdb_syn()
 					msg = ""
 				elif "context".startswith(data):
 					self.show_context()
@@ -1102,7 +1115,7 @@ class PyGDB():
 					self.hook_map.pop(key)
 					break
 
-	def run_until(self, addr, is_pie = False):
+	def run_until(self, addr, is_pie = False, syn = False):
 		#print("run_until: 0x%x"%addr)
 		#self.interact()
 		addr = self.real_addr(addr, is_pie)
@@ -1119,6 +1132,8 @@ class PyGDB():
 				print('[+] ' + 'Interrupted')
 				self.interrupt_process()
 				self.NopOp()
+				if syn == True:
+					self.do_pygdb_syn()
 				return -1
 
 	def DealHook(self, msg):
@@ -1191,17 +1206,17 @@ class PyGDB():
 							return True, pc
 			return False, pc
 
-	def go(self):
-		return self.Continue()
+	def go(self, syn = False):
+		return self.Continue(syn)
 
-	def Go(self):
-		return self.Continue()
+	def Go(self, syn = False):
+		return self.Continue(syn)
 
 	def NopOp(self):
 		#self.do_pygdb_ret("info terminal")
 		pass
 
-	def Continue(self):
+	def Continue(self, syn = False):
 		while True:
 			try:
 				msg = self._continue()
@@ -1214,9 +1229,11 @@ class PyGDB():
 				print('[+] ' + 'Interrupted')
 				self.interrupt_process()
 				self.NopOp()
+				if syn == True:
+					self.do_pygdb_syn()
 				return -1, "Interrupted"
 
-	def StepI(self):
+	def StepI(self, syn = False):
 		if True:
 			try:
 				msg = self.stepi()
@@ -1226,6 +1243,8 @@ class PyGDB():
 				print('[+] ' + 'Interrupted')
 				self.interrupt_process()
 				self.NopOp()
+				if syn == True:
+					self.do_pygdb_syn()
 				return -1
 
 	def StepO(self):
@@ -1359,13 +1378,18 @@ class PyGDB():
 			size = value[1]
 			self.write_mem(addr, data[offset:offset+size])
 
-	def call(self, func, args = [], lib_path = "libc", use_addr = None, call_reg = None):
+	def call(self, func, args = [], lib_path = "libc", use_addr = None, call_reg = None, debug_list = [], debug_mode = 0):
 		"""
 		args = [arg0, arg1, arg2, ...]
 		"""
 		if io_wrapper == "zio":
 			print("please install pwntools")
 			return 
+
+		if debug_list is None or debug_list == False:
+			debug_list = []
+		elif type(debug_list) != list:
+			debug_list = [debug_list]
 
 		if type(func) == str:
 			if lib_path is not None:
@@ -1498,6 +1522,12 @@ class PyGDB():
 
 		#if func == "printf":
 		#	self.interact()
+		if func in debug_list:
+			self.stepi()
+			if debug_mode == 0:
+				self.interact_pygdb()
+			else:
+				self.interact()
 
 		if len(self.hook_map.keys()) != 0:
 			self.run_until(next_addr)
@@ -2662,7 +2692,7 @@ int main() {
 		else:
 			return "unkown_%d"%skip_sign
 
-	def trace(self, b_addr = None, e_addr = None, logPattern = "trace", record_maps = [], skip_list = [], byThread = False, asmCode = False, appendMode = False, is_pie = False, rec_base = 0x0, skip_loops = True, trace_handler = None, function_mode = False, show = False, oneThread = True):
+	def trace(self, b_addr = None, e_addr = None, logPattern = "trace", record_maps = [], skip_list = [], byThread = False, asmCode = True, appendMode = False, is_pie = False, rec_base = 0x0, skip_loops = True, trace_handler = None, function_mode = False, show = True, oneThread = True):
 
 		if b_addr is not None:
 			b_addr = self.real_addr(b_addr, is_pie)
@@ -2683,13 +2713,19 @@ int main() {
 			thread_id, _ = self.get_thread_id()
 			self.priv_globals["trace_thread_id"] = thread_id
 
-		suffix = ".log"
-		if logPattern.endswith(".log"):
+		if logPattern == True:
+			logPattern = "trace"
+
+		if logPattern is not None and logPattern != False:
 			suffix = ".log"
-			logPattern = logPattern[:-4]
-		elif logPattern.endswith(".txt"):
-			suffix = ".txt"
-			logPattern = logPattern[:-4]
+			if logPattern.endswith(".log"):
+				suffix = ".log"
+				logPattern = logPattern[:-4]
+			elif logPattern.endswith(".txt"):
+				suffix = ".txt"
+				logPattern = logPattern[:-4]
+		else:
+			logPattern = None
 
 		logfile_list = []
 
@@ -2707,7 +2743,7 @@ int main() {
 						if asmInfo.startswith("call"):
 							info = "  "*func_level + info + ": " + asmInfo
 							func_level += 1
-						elif asmInfo.startswith("ret"):
+						elif asmInfo.startswith("ret") or asmInfo.startswith("repz ret"):
 							info = "  "*func_level + info + ": " + asmInfo
 							func_level -= 1
 							if func_level < 0:
@@ -2717,12 +2753,16 @@ int main() {
 					else:
 						info += ": " + asmInfo
 
-				if byThread == True:
-					thread_id, _ = self.get_thread_id()
-					logfile = logPattern + "_%d"%thread_id + suffix
+				if logPattern is not None:
+					if byThread == True:
+						thread_id, _ = self.get_thread_id()
+						logfile = logPattern + "_%d"%thread_id + suffix
+					else:
+						logfile = logPattern + suffix
 				else:
-					logfile = logPattern + suffix
-				if appendMode == False:
+					logfile = None
+
+				if logfile is not None and appendMode == False:
 					if logfile not in logfile_list:
 						self.writefile(logfile, "")
 						logfile_list.append(logfile)
@@ -2730,7 +2770,8 @@ int main() {
 				if len(info) != 0:
 					if show:
 						print(info)
-					self.appendfile(logfile, info + "\n")
+					if logfile is not None:
+						self.appendfile(logfile, info + "\n")
 
 				if (e_addr is not None and pc == e_addr) or end_status == True:
 					break
@@ -2756,11 +2797,12 @@ int main() {
 				if trace_handler is not None:
 					sign = trace_handler(self, pc)
 					#print("sign:", sign)
-					if sign == "end":
-						end_status = True
-						continue
-					elif sign == "skip":
-						skip_sign = 1
+					if sign is not None:
+						if sign == "end":
+							end_status = True
+							continue
+						elif sign == "skip":
+							skip_sign = 1
 
 				if skip_sign == 0 and len(record_maps) > 0:
 					if type(record_maps[0]) != list:
@@ -2788,7 +2830,8 @@ int main() {
 						info = "-- skip chains -> %s%s"%(self.skip_reason(skip_sign), skip_chains)
 						if show:
 							print(info)
-						self.appendfile(logfile, info + "\n")	
+						if logfile is not None:
+							self.appendfile(logfile, info + "\n")	
 						
 					if next_addr == -1:
 						print("next_addr:", -1)
@@ -2993,7 +3036,7 @@ int main() {
 					break
 				cur_addr = asm_item[0]
 				opcode = asm_item[1]
-				if opcode.startswith("ret"):
+				if opcode.startswith("ret") or opcode.startswith("repz ret"):
 					return cur_addr
 				addr = cur_addr
 			if addr == last_addr:
@@ -3046,7 +3089,7 @@ int main() {
 			self.write_mem(addr, origin_data)
 			self.inject_patch_map.pop(addr)
 			#self.inject_hook_free(addr, len(target_data))
-			return len(target_data)
+			return len(origin_data)
 		return 0
 
 	def inject_restore(self, addr):
@@ -3241,13 +3284,20 @@ int main() {
 			self.inject_hook_free(key)
 			self.remvoe_inject_patch(key)
 
-	def inject_hook_alloc(self, data):
-		if self.inject_hook_size >= len(data):
+	def inject_hook_alloc(self, data_size):
+		if type(data_size) in [str, bytes]:
+			data = data_size
+			size = len(data)
+		else:
+			size = data_size
+			data = ''
+		if self.inject_hook_size >= size:
 			addr = self.inject_hook_addr
-			origin_data = self.read_mem(self.inject_hook_addr, len(data))
-			self.write_mem(self.inject_hook_addr, data)
-			self.inject_hook_addr += len(data)
-			self.inject_hook_size -= len(data)
+			origin_data = self.read_mem(self.inject_hook_addr, size)
+			if len(data) > 0:
+				self.write_mem(self.inject_hook_addr, data)
+			self.inject_hook_addr += size
+			self.inject_hook_size -= size
 			self.inject_patch_map[addr] = [data, origin_data]
 			return addr
 		else:
