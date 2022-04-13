@@ -56,6 +56,8 @@ def main():
 
     pygdb.init_map_config(map_config)
     pygdb.init_data_config(data_config)
+    libc_elf = ELF("/lib/x86_64-linux-gnu/libc.so.6")
+    libc_elf.address = pygdb.libc()
 
     got_list = []
     got_list.append(["memset",  0x100001028])
@@ -66,7 +68,17 @@ def main():
     got_list.append(["strncmp", 0x100001048])
     got_list.append(["__stack_chk_fail", 0x100001018])
 
+    #bin_elf = ELF("./xor")
+
     pygdb.fix_gots(got_list)
+
+    addr = libc_elf.symbols["strncmp"]
+    strncmp_real_addr = pygdb.call_s(addr)
+    print("strncmp:", hex(addr))
+    print("strncmp:", hex(pygdb.read_long(0x100001048)))
+    print("strncmp:", hex(strncmp_real_addr))
+
+    pygdb.write_long(0x100001048, strncmp_real_addr)
 
     pygdb.set_reg("pc", 0x100000D70)
 
