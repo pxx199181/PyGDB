@@ -1,4 +1,6 @@
 from PyGDB import PyGDB
+from pwn import *
+import socket
 
 def test_intel():
 	pygdb = PyGDB(target = "./test_x86")
@@ -30,7 +32,6 @@ def test_intel():
 
 	print(pygdb.get_code(20))
 	pygdb.interact()
-
 
 def test_arm():
 	pygdb = PyGDB(target = "./test_arm")
@@ -121,15 +122,9 @@ def test_hook():
 	pygdb.globals["only_once"] = False
 
 	pygdb.start()
+	pygdb.run_until(0x400562)
 
 	pygdb.interact_pygdb()
-
-	#pygdb.Continue()
-	#pygdb.clear_hook()
-	#pygdb.stepi()
-
-	#also can use Continue
-	pygdb.run_until(0x400562)
 
 	print(hex(pygdb.get_lib_func("printf", "libc")))
 	print(hex(pygdb.get_lib_func("puts")))
@@ -137,196 +132,10 @@ def test_hook():
 	shellcode = ""
 	shellcode += asm(shellcraft.sh())
 
-
 	pygdb.make_tiny_elf(shellcode, "test.bin", base = 0x400000)
 
 	pygdb.interact()
 
-def test_inject_hook():
-
-	pygdb = PyGDB(target = "./test_hook")
-	#pygdb.hook(0x40054d, hook_test, [0, 0x40054d, "call printf",])
-	#pygdb.hook(0x400552, hook_out, [0, 0x400552, "cmp",])
-
-	pygdb.start()
-
-	pygdb.setvbuf0()
-	pygdb.dup_io(port = 12345, new_terminal = True)
-	import time
-	time.sleep(2)
-
-	code_addr = 0x8304000
-	data_addr = 0x8300000
-	map_config = {
-		data_addr:[0x1000, "rw"],
-		code_addr:[0x2000, "wx"],
-	}
-
-	pygdb.init_map_config(map_config)
-
-	globals_map = {}
-	bin_elf = ELF("./test_hook")
-	for key in bin_elf.plt.keys():
-		globals_map[key] = bin_elf.plt[key]
-	print("globals_map:", globals_map)
-	pygdb.config_inject_map(code_addr, 0x1000, globals_map)
-
-	#
-	choice = raw_input("mode(patch to file?(1:yes, 0:no))").strip()
-	if choice == "1":
-		use_addr = 0x400460
-		use_size  = 0x4004A0 - 0x400460
-	else:
-		use_addr = code_addr
-		use_size = 0x1000
-	#pygdb.config_inject_map(code_addr, 0x1000, globals_map)
-	pygdb.config_inject_map(use_addr, use_size, globals_map)
-
-	#pygdb.interact()
-
-	message_data = "inject_hook\n\x00"
-	data_addr = pygdb.inject_hook_alloc(message_data)
-	asm_code = """
-	push rdi
-	push rsi
-	mov rdi, 0x%x
-	call printf
-	pop rsi
-	pop rdi
-	"""%(data_addr)
-	pygdb.inject_hook(0x40054d, asm_code)#, show = True)
-	
-	asm_code = "nop"
-	pygdb.inject_hook(0x40055A, asm_code)
-
-	pygdb.inject_patch_asm(0x4004ED, "nop")
-
-	pygdb.run_until(0x400562)
-
-	if choice == "1":
-		pygdb.inject_into_file("./test_hook", "./test_hook_p", base = 0x400000)
-
-	#pygdb.interact() # normal exit
-
-	print("before remove_inject_hook")
-	pygdb.show_inject_info()
-
-	pygdb.remove_inject_hook(0x40054d)
-
-	print("")
-	print("after remove_inject_hook")
-	pygdb.show_inject_info()
-
-
-	pygdb.inject_hook_free(data_addr, len(message_data))
-	print("")
-	print("after inject_hook_free")
-	pygdb.show_inject_info()
-
-	pygdb.inject_restore(0x4004ED)
-	print("")
-	print("after inject_restore")
-	pygdb.show_inject_info()
-
-	pygdb.clear_inject_hook()
-	print("")
-	print("after clear_inject_hook")
-	pygdb.show_inject_info()
-
-	print("stage 2")
-	pygdb.set_reg("pc", 0x0400526)
-	pygdb.run_until(0x400562)
-
-	pygdb.interact()
-
-
-def test_trace():
-	def hook_fopen(pygdb, bpType):
-		if bpType == "OnEnter":
-			rdi = pygdb.get_reg("rdi")
-			filename = pygdb.readString(rdi)
-			print("fopen:", filename)
-
-	def hook_fread(pygdb, bpType):
-		if bpType == "OnEnter":
-			count = pygdb.get_reg("rsi")
-			size = pygdb.get_reg("rdx")
-			print("fread:", count*size)
-
-	def hook_other_thread(pygdb, bpType):
-		if bpType == "OnEnter":
-			thread_num, addr_v = pygdb.get_thread_id()
-			rdi = pygdb.get_reg("rdi")
-			info = pygdb.readString(rdi)
-			print("thread_%d(0x%x): printf(%s)"%(thread_num, addr_v, repr(info)))
-
-
-	pygdb = PyGDB(target = "./test_thread")
-	pygdb.hook("fopen", hook_fopen)
-	pygdb.hook("fread", hook_fread)
-	pygdb.hook(0x400C0A, hook_other_thread)
-
-	pygdb.start()
-
-	trace_handler = None
-
-	b_addr = 0x400A88
-	e_addr = 0x400B9C
-	function_mode = True
-	#function_mode = False
-	show = True
-	pygdb.trace(b_addr = b_addr, e_addr = e_addr, logPattern = "trace_log", byThread = True, asmCode = True, record_maps = [0x400000, 0x500000], trace_handler = trace_handler, function_mode = function_mode, show = show, oneThread = True)
-
-	pygdb.interact()
-
-
-def test_catch():
-	def hook_syscall(pygdb, bpType, syscall_name, input_arg):
-		if syscall_name == "write":
-			return
-		if bpType == "OnEnter":
-			pc = pygdb.get_reg("pc")
-			print(hex(pc), "enter", syscall_name)
-			if syscall_name == "open":
-				rdi = pygdb.get_reg("rdi")
-				name = pygdb.readString(rdi)
-				print("open - %s"%input_arg, name)
-			elif syscall_name == "read":
-				rdx = pygdb.get_reg("rdx")
-				print("read - %s size"%input_arg, hex(rdx))
-			else:
-				print(syscall_name + " - %s"%input_arg)
-		elif bpType == "OnRet":
-			pc = pygdb.get_reg("pc")
-			print(hex(pc), "return", syscall_name)
-
-	def hook_image(pygdb, libname, t_type):
-		print("-"*0x20)
-		print(t_type, libname)
-
-	def hook_signal(pygdb, info):
-		print("-"*0x20)
-		print("signal", info)
-
-	pygdb = PyGDB(target = "./test_hook")
-	pygdb.hook_catch_syscall("open", hook_syscall, ["open"])
-	addr_v = pygdb.hook_catch_syscall("", hook_syscall, ["all"])
-
-	pygdb.hook_catch_load("", hook_image, ["load"])
-	pygdb.hook_catch_unload("", hook_image, ["unload"])
-
-	pygdb.hook_catch_signal("all", hook_signal, [])
-
-	pygdb.start()
-	pygdb.globals["cmp_count"] = 0
-
-	pygdb.run_until(0x400562)
-	pygdb.remove_hook(addr_v)
-	print(pygdb.hook_map.keys())
-
-	pygdb.interact()
-
-from pwn import *
 def test_mmap():
 	pygdb = PyGDB(target = "./test_hook")
 	#pygdb.
@@ -438,7 +247,146 @@ def test_mmap():
 	print str_info
 	return
 
-import socket
+def test_patch():
+	#pygdb = PyGDB(target = "./test_hook")
+	pygdb = PyGDB(arch = "amd64")
+	pygdb.writefile("test_patch", "SADKNJASNDKNSADNKJSANDSADKNJASNDKNSADNKJSANDSADKNJASNDKNSADNKJSAND")
+
+	patch_config = {
+		0 : "ni",
+		4 : "wo",
+		10 : "ha",
+	}
+	pygdb.patch_file("test_patch", patch_config, "test_patch.out")
+
+	asm_info = """
+	mov rax, rbx
+	push rsp
+	"""
+	patch_config = {
+		0x400010 : "12",
+		0x400020 : ["data", "33"],
+		0x400024 : ["asm", asm_info],
+	}
+	pygdb.patch_file("test_patch.out", patch_config, base = 0x400000)
+
+
+	pygdb = PyGDB()
+	pygdb.load_source(arch = "amd64", text_addr = 0x8300000)
+	pygdb.set_bp("main")
+	pygdb.start()
+
+	pygdb.interact()
+
+	
+def test_dup_io():
+	def hook(pygdb, bpType):
+		if bpType == "OnEnter":
+			data = pygdb.get_regs()
+			print data
+			data = pygdb.get_code(count = 10)
+			print data
+			data = pygdb.get_stack(count = 20)
+			print data
+
+	pygdb = PyGDB(target = "./test_dup_io")
+	b_id, _ = pygdb.set_bp("main")
+	pygdb.run()
+	pygdb.del_bp(b_id)
+
+	pygdb.dup_io(port = 12345, new_terminal = True)
+	#pygdb.dup_io(port = 12345, new_terminal = False)
+	pygdb.hook(0x400883, hook, [])
+	pygdb.Continue()
+	#pygdb.detach()
+	pygdb.interact()
+
+
+def test_trace():
+	def hook_fopen(pygdb, bpType):
+		if bpType == "OnEnter":
+			rdi = pygdb.get_reg("rdi")
+			filename = pygdb.readString(rdi)
+			print("fopen:", filename)
+
+	def hook_fread(pygdb, bpType):
+		if bpType == "OnEnter":
+			count = pygdb.get_reg("rsi")
+			size = pygdb.get_reg("rdx")
+			print("fread:", count*size)
+
+	def hook_other_thread(pygdb, bpType):
+		if bpType == "OnEnter":
+			thread_num, addr_v = pygdb.get_thread_id()
+			rdi = pygdb.get_reg("rdi")
+			info = pygdb.readString(rdi)
+			print("thread_%d(0x%x): printf(%s)"%(thread_num, addr_v, repr(info)))
+
+
+	pygdb = PyGDB(target = "./test_thread")
+	pygdb.hook("fopen", hook_fopen)
+	pygdb.hook("fread", hook_fread)
+	pygdb.hook(0x400C0A, hook_other_thread)
+
+	pygdb.start()
+
+	trace_handler = None
+
+	b_addr = 0x400A88
+	e_addr = 0x400B9C
+	function_mode = True
+	#function_mode = False
+	show = True
+	pygdb.trace(b_addr = b_addr, e_addr = e_addr, logPattern = "trace_log", byThread = True, asmCode = True, record_maps = [0x400000, 0x500000], trace_handler = trace_handler, function_mode = function_mode, show = show, oneThread = True)
+
+	pygdb.interact()
+
+def test_catch():
+	def hook_syscall(pygdb, bpType, syscall_name, input_arg):
+		if syscall_name == "write":
+			return
+		if bpType == "OnEnter":
+			pc = pygdb.get_reg("pc")
+			print(hex(pc), "enter", syscall_name)
+			if syscall_name == "open":
+				rdi = pygdb.get_reg("rdi")
+				name = pygdb.readString(rdi)
+				print("open - %s"%input_arg, name)
+			elif syscall_name == "read":
+				rdx = pygdb.get_reg("rdx")
+				print("read - %s size"%input_arg, hex(rdx))
+			else:
+				print(syscall_name + " - %s"%input_arg)
+		elif bpType == "OnRet":
+			pc = pygdb.get_reg("pc")
+			print(hex(pc), "return", syscall_name)
+
+	def hook_image(pygdb, libname, t_type):
+		print("-"*0x20)
+		print(t_type, libname)
+
+	def hook_signal(pygdb, info):
+		print("-"*0x20)
+		print("signal", info)
+
+	pygdb = PyGDB(target = "./test_hook")
+	pygdb.hook_catch_syscall("open", hook_syscall, ["open"])
+	addr_v = pygdb.hook_catch_syscall("", hook_syscall, ["all"])
+
+	pygdb.hook_catch_load("", hook_image, ["load"])
+	pygdb.hook_catch_unload("", hook_image, ["unload"])
+
+	pygdb.hook_catch_signal("all", hook_signal, [])
+
+	pygdb.start()
+	pygdb.globals["cmp_count"] = 0
+
+	pygdb.run_until(0x400562)
+	pygdb.remove_hook(addr_v)
+	print(pygdb.hook_map.keys())
+
+	pygdb.interact()
+
 def test_inject():
 	pygdb = PyGDB(target = "./test_hook")
 	#pygdb.
@@ -533,60 +481,130 @@ def test_inject():
 	pygdb.interact()
 	return
 
-def test_patch():
-	
-	#pygdb = PyGDB(target = "./test_hook")
-	pygdb = PyGDB(arch = "amd64")
-	pygdb.writefile("test_patch", "SADKNJASNDKNSADNKJSANDSADKNJASNDKNSADNKJSANDSADKNJASNDKNSADNKJSAND")
-
-	patch_config = {
-		0 : "ni",
-		4 : "wo",
-		10 : "ha",
-	}
-	pygdb.patch_file("test_patch", patch_config, "test_patch.out")
-
-	asm_info = """
-	mov rax, rbx
-	push rsp
-	"""
-	patch_config = {
-		0x400010 : "12",
-		0x400020 : ["data", "33"],
-		0x400024 : ["asm", asm_info],
-	}
-	pygdb.patch_file("test_patch.out", patch_config, base = 0x400000)
-
-
-	pygdb = PyGDB()
-	pygdb.load_source(arch = "amd64", text_addr = 0x8300000)
-	pygdb.set_bp("main")
+def test_inject_hook():
+	pygdb = PyGDB(target = "./test_hook")
 	pygdb.start()
 
-	pygdb.interact()
-
-	
-def test_dup_io():
-	def hook(pygdb, bpType):
-		if bpType == "OnEnter":
-			data = pygdb.get_regs()
-			print data
-			data = pygdb.get_code(count = 10)
-			print data
-			data = pygdb.get_stack(count = 20)
-			print data
-
-	pygdb = PyGDB(target = "./test_dup_io")
-	b_id, _ = pygdb.set_bp("main")
-	pygdb.run()
-	pygdb.del_bp(b_id)
-
+	pygdb.setvbuf0()
 	pygdb.dup_io(port = 12345, new_terminal = True)
-	#pygdb.dup_io(port = 12345, new_terminal = False)
-	pygdb.hook(0x400883, hook, [])
-	pygdb.Continue()
-	#pygdb.detach()
+	import time
+	time.sleep(2)
+
+	code_addr = 0x8304000
+	data_addr = 0x8300000
+	map_config = {
+		data_addr:[0x1000, "rw"],
+		code_addr:[0x2000, "wx"],
+	}
+
+	pygdb.init_map_config(map_config)
+
+	globals_map = {}
+	bin_elf = ELF("./test_hook")
+	for key in bin_elf.plt.keys():
+		globals_map[key] = bin_elf.plt[key]
+	print("globals_map:", globals_map)
+	pygdb.config_inject_map(code_addr, 0x1000, globals_map)
+
+	#
+	choice = raw_input("mode(patch to file?(1:yes, 0:no))").strip()
+	if choice == "1":
+		use_addr = 0x400460
+		use_size  = 0x4004A0 - 0x400460
+	else:
+		use_addr = code_addr
+		use_size = 0x1000
+	#pygdb.config_inject_map(code_addr, 0x1000, globals_map)
+	pygdb.config_inject_map(use_addr, use_size, globals_map)
+
+	#pygdb.interact()
+
+	message_data = "inject_hook\n\x00"
+	data_addr = pygdb.inject_hook_alloc(message_data)
+	asm_code = """
+	push rdi
+	push rsi
+	mov rdi, 0x%x
+	call printf
+	pop rsi
+	pop rdi
+	"""%(data_addr)
+	pygdb.inject_hook(0x40054d, asm_code)#, show = True)
+	
+	asm_code = "nop"
+	pygdb.inject_hook(0x40055A, asm_code)
+
+	pygdb.inject_patch_asm(0x4004ED, "nop")
+
+	pygdb.run_until(0x400562)
+
+	if choice == "1":
+		pygdb.inject_into_file("./test_hook", "./test_hook_p", base = 0x400000)
+
+	#pygdb.interact() # normal exit
+
+	print("before remove_inject_hook")
+	pygdb.show_inject_info()
+
+	pygdb.remove_inject_hook(0x40054d)
+
+	print("")
+	print("after remove_inject_hook")
+	pygdb.show_inject_info()
+
+	pygdb.inject_hook_free(data_addr, len(message_data))
+	print("")
+	print("after inject_hook_free")
+	pygdb.show_inject_info()
+
+	pygdb.inject_restore(0x4004ED)
+	print("")
+	print("after inject_restore")
+	pygdb.show_inject_info()
+
+	pygdb.clear_inject_hook()
+	print("")
+	print("after clear_inject_hook")
+	pygdb.show_inject_info()
+
+	print("stage 2")
+	pygdb.set_reg("pc", 0x0400526)
+	pygdb.run_until(0x400562)
 	pygdb.interact()
+
+def test_fd():
+    binary_path = "test222"
+    pygdb = PyGDB(target = binary_path)
+    #pygdb.attach_name(target, 0)
+    #pygdb.attach("ip:port")
+    #pygdb.attach(pid)
+
+    pygdb.start()
+    pygdb.setvbuf0()
+    #pygdb.dup_io(port = 12345, new_terminal = True)
+
+    pc = pygdb.get_reg("pc")
+    pc_ret = pygdb.find_ret(pc)
+    print(hex(pc))
+    print(hex(pc_ret))
+
+    pygdb.set_bp("alarm")
+    pygdb.Continue()
+
+    ret_addr = pygdb.get_backtrace(2)[1]
+    print(pygdb.get_code(ret_addr, below = True, count = 10))
+    pygdb.set_bp(ret_addr)
+    pygdb.Continue()
+
+    rbp = pygdb.get_reg("rbp")
+    fd1 = pygdb.read_int(rbp - 0x3C)
+    fd2 = pygdb.read_int(rbp - 0x40)
+    fd_list = [0, 1, 2, fd1, fd2]
+    for fd in fd_list:
+        info = pygdb.get_fd_info_s(fd)
+        print("fd[%d]:"%fd, info)
+    pygdb.interact()
+    exit(0)
 
 
 import sys
@@ -616,3 +634,5 @@ if __name__ == "__main__":
 			test_inject()
 		elif sys.argv[1] == "inject_hook":
 			test_inject_hook()
+		elif sys.argv[1] == "fd":
+			test_fd()

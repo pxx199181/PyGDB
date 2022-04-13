@@ -1,22 +1,6 @@
 from PyGDB import PyGDB
 from pwn import *
 
-def test():
-    target = "/bin/ls"
-    pygdb = PyGDB(target)
-    pygdb.start()
-
-    print pygdb.get_regs()
-    print pygdb.get_code()
-    print pygdb.get_stack()
-    rsp = pygdb.get_reg("rsp")
-    print pygdb.get_mem(rsp, 0x20)
-    print pygdb.hexdump(rsp, 0x20)
-
-    print pygdb.get_bp()
-
-    pygdb.interact()
-
 def main():
     #test()
     def hook_malloc(pygdb, bpType):

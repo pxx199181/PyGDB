@@ -8,11 +8,11 @@ try:
 	io_wrapper = "pwntools"
 except:
 	from zio import *
-	from zio import which
-	u8 = p8 = l8
-	u16 = p16 = l16
-	u32 = p32 = l32
-	u64 = p64 = l64
+	from zio import which 
+	u8 = p8 = lambda x,endian="little":l8(x) if endian == "little" else b8(x)
+	u16 = p16 = lambda x,endian="little":l16(x) if endian == "little" else b16(x)
+	u32 = p32 = lambda x,endian="little":l32(x) if endian == "little" else b32(x)
+	u64 = p64 = lambda x,endian="little":l64(x) if endian == "little" else b64(x)
 
 	io_wrapper = "zio"
 
@@ -23,6 +23,7 @@ import threading
 import string
 import sys
 import commands
+import socket
 
 reload(sys)
 sys.setdefaultencoding('utf-8')
@@ -170,11 +171,11 @@ def PyGDB_make_tiny_elf(shellcode, outfile = None, base = None, mode = 32):
 	return elf_bin
 
 class PyGDB():
-	def __init__(self, target = None, arch = None):
-		self.load_init(target, arch)
+	def __init__(self, target = None, args = [], arch = None):
+		self.load_init(target, args, arch)
 		mf_angelheap.init_gdb(self)
 
-	def load_init(self, target = None, arch = None):
+	def load_init(self, target = None, args = [], arch = None):
 		PYGDBFILE = os.path.abspath(os.path.expanduser(__file__))
 		#print("PYGDBFILE:", PYGDBFILE)
 		while os.path.islink(PYGDBFILE):
@@ -215,6 +216,9 @@ class PyGDB():
 		self.inject_hook_globals = {}
 
 		self.target_argv = ""
+		if type(args) == str:
+			args = args.split(" ")
+		self.target_args = args
 
 		#self.gdb_path = misc.which('gdb-multiarch') or misc.which('gdb')
 		self.gdb_path = which('gdb-multiarch') or which('gdb')
@@ -318,6 +322,7 @@ class PyGDB():
 		else:
 			self.io = process(argv = self.gdb_argv)
 			pids = proc.pidof(self.io)
+		self.set_args(self.target_args)
 
 		
 		print("gdb pid", pids)
@@ -342,6 +347,12 @@ class PyGDB():
 			self.dbg_pid = target
 			print(self.do_gdb_ret("attach %d"%target))
 			self.target_argv = "attach %d"%target
+
+	def set_args(self, args):
+		if type(args) == str:
+			args = args.split(" ")
+		self.arch_args = args
+		self.do_gdb_ret("set args %s"%(" ".join(self.arch_args)))
 
 	def start(self):
 		self.is_local = True
@@ -911,35 +922,35 @@ class PyGDB():
 	def read_byte(self, addr):
 		return u8(self.read_mem(addr, 1))
 
-	def read_word(self, addr):
-		return u16(self.read_mem(addr, 2))
+	def read_word(self, addr, endian = "little"):
+		return u16(self.read_mem(addr, 2), endian = endian)
 
-	def read_int(self, addr):
-		return u32(self.read_mem(addr, 4))
+	def read_int(self, addr, endian = "little"):
+		return u32(self.read_mem(addr, 4), endian = endian)
 
-	def read_long(self, addr):
-		return u64(self.read_mem(addr, 8))
+	def read_long(self, addr, endian = "little"):
+		return u64(self.read_mem(addr, 8), endian = endian)
 
 	def write_byte(self, addr, value):
 		self.write_mem(addr, p8(value))
 
-	def write_word(self, addr, value):
-		self.write_mem(addr, p16(value))
+	def write_word(self, addr, value, endian = "little"):
+		self.write_mem(addr, p16(value, endian = endian))
 	
-	def write_int(self, addr, value):
-		self.write_mem(addr, p32(value))
+	def write_int(self, addr, value, endian = "little"):
+		self.write_mem(addr, p32(value, endian = endian))
 	
-	def write_long(self, addr, value):
-		self.write_mem(addr, p64(value))
+	def write_long(self, addr, value, endian = "little"):
+		self.write_mem(addr, p64(value, endian = endian))
 
-	def _read_mid_list(self, addr, count, bc = 4):
+	def _read_mid_list(self, addr, count, bc = 4, endian = "little"):
 		f_i = {}
 		f_i[1] = u8
 		f_i[2] = u16
 		f_i[4] = u32
 		f_i[8] = u64
 
-		u_f = f_i[bc]
+		u_f = lambda x,endian='little':f_i[bc](x, endian = endian)
 
 		data = self.read_mem(addr, count*bc)
 		#print len(data)
@@ -959,13 +970,14 @@ class PyGDB():
 	def read_long_list(self, addr, count):
 		return self._read_mid_list(addr, count, 8)
 
-	def _write_mid_list(self, addr, data_list, bc = 4):
+	def _write_mid_list(self, addr, data_list, bc = 4, endian = "little"):
 		f_i = {}
 		f_i[1] = p8
 		f_i[2] = p16
 		f_i[4] = p32
 		f_i[8] = p64
-		u_f = f_i[bc]
+		#u_f = f_i[bc]
+		u_f = lambda x, endian='little':f_i[bc](x, endian = endian)
 		result = map(u_f, data_list)
 		self.write_mem(addr, "".join(result))
 		
@@ -1743,16 +1755,11 @@ class PyGDB():
 		Lewis.sin_addr.s_addr = inet_addr(ip);
 		memset(Lewis.sin_zero,0,sizeof(Lewis.sin_zero));
 		"""
-		def parse_ip(ip):
-			data = ""
-			for item in ip.split("."):
-				data += p8(int(item))
-			return data
 
 		sockaddr_in = ""
 		sockaddr_in += p16(2)
 		sockaddr_in += p16(port, endian = 'big')
-		sockaddr_in += parse_ip(ip)
+		sockaddr_in += self.pack_ip4(ip)
 		sockaddr_in += p64(0)
 
 		#self.hexdump(data = sockaddr_in)
@@ -1765,10 +1772,12 @@ class PyGDB():
 		SO_REUSEADDR = 2
 		if self.call("setsockopt", [server, SOL_SOCKET, SO_REUSEADDR, p32(1), 4]) == -1:
 			print("setsockopt error")
+			self.restore_context()
 			return  
 		#bind(server,(struct sockaddr *)&serv_addr,0x10)
 		if (self.call("bind", [server, sockaddr_in, 0x10]) != 0):
 			print("bind error")
+			self.restore_context()
 			return 
 		#print "bind", server
 		#listen(server,0)
@@ -1904,6 +1913,19 @@ class PyGDB():
 		#print "run_shellcode:", ret_v
 		return ret_v
 
+	def parse_ip4(self, ip):
+		data_list = []
+		for item in ip:
+			data_list.append(str(u8(item)))
+		return ".".join(data_list)
+
+	def pack_ip4(self, ip):
+		data = ""
+		for item in ip.split("."):
+			data += p8(int(item))
+		return data
+
+
 
 	def dup_io_static(self, port = 9999, ip = "0.0.0.0", new_terminal = True):
 		self.save_context()
@@ -1922,16 +1944,10 @@ class PyGDB():
 		Lewis.sin_addr.s_addr = inet_addr(ip);
 		memset(Lewis.sin_zero,0,sizeof(Lewis.sin_zero));
 		"""
-		def parse_ip(ip):
-			data = ""
-			for item in ip.split("."):
-				data += p8(int(item))
-			return data
-
 		sockaddr_in = ""
 		sockaddr_in += p16(2)
 		sockaddr_in += p16(port, endian = 'big')
-		sockaddr_in += parse_ip(ip)
+		sockaddr_in += self.pack_ip4(ip)
 		sockaddr_in += p64(0)
 
 		#self.hexdump(data = sockaddr_in)
@@ -1944,10 +1960,12 @@ class PyGDB():
 		SO_REUSEADDR = 2
 		if self.call_syscall("SYS_setsockopt", [server, SOL_SOCKET, SO_REUSEADDR, p32(1), 4]) == -1:
 			print("setsockopt error")
+			self.restore_context()
 			return  
 		#bind(server,(struct sockaddr *)&serv_addr,0x10)
 		if (self.call_syscall("SYS_bind", [server, sockaddr_in, 0x10]) != 0):
 			print("bind error")
+			self.restore_context()
 			return 
 		#print "bind", server
 		#listen(server,0)
@@ -2963,7 +2981,7 @@ int main() {
 		return
 
 	def setvbuf0(self):
-
+		self.save_context()
 		stdin = self.get_symbol_value("stdin")
 		stdout = self.get_symbol_value("stdout")
 		stderr = self.get_symbol_value("stderr")
@@ -2971,9 +2989,10 @@ int main() {
 		#setvbuf = pygdb.get_symbol_value("setvbuf")
 		#pygdb.set_bp(setvbuf)
 		#print "stdin:", hex(stdin)
-		self.call_s("setvbuf", [stdin, 0, 2, 0])
-		self.call_s("setvbuf", [stdout, 0, 2, 0])
-		self.call_s("setvbuf", [stderr, 0, 2, 0])
+		self.call("setvbuf", [stdin, 0, 2, 0])
+		self.call("setvbuf", [stdout, 0, 2, 0])
+		self.call("setvbuf", [stderr, 0, 2, 0])
+		self.restore_context()
 
 	def execute(self, cmdline, to_string = True):
 		data = self.do_gdb_ret(cmdline)
@@ -3412,3 +3431,86 @@ int main() {
 		print("inject_hook_addr:", hex(self.inject_hook_addr))
 
 
+	def parse_sock_info(self, sockaddr):
+	    info = ""
+	    family = self.read_word(sockaddr)
+	    port = self.read_word(sockaddr + 2, "big")
+	    if family == socket.AF_INET:
+	        ip_data = self.read_mem(sockaddr + 4, 4)
+	        ip = self.parse_ip4(ip_data)
+	        info = "%s:%d"%(ip, port)
+	    elif family == socket.AF_INET6:
+	        sp = self.get_reg("sp")
+	        stackSize = 0x40
+	        sp -= stackSize
+	        self.set_reg("sp", sp)
+
+	        ipAddr = sp
+	        self.call("inet_ntop", [socket.AF_INET6, sockaddr + 8, ipAddr, 0x20])
+	        ip = self.readString(ipAddr)
+	        info = "[%s]:%d"%(ip, port)
+
+	        sp += stackSize
+	        self.set_reg("sp", sp)
+	    return info
+
+	def get_sock_info(self, sock):
+	    sp = self.get_reg("sp")
+	    stackSize = 0x40
+	    sp -= stackSize
+	    self.set_reg("sp", sp)
+
+	    sockaddr = sp
+	    lenAddr = sp + 0x30
+	    info_list = []
+
+	    self.write_int(lenAddr, 0x20)
+	    res = self.call("getsockname", [sock, sockaddr, lenAddr], debug_list = [])
+	    #self.hexdump(sockaddr, 0x20)
+	    if res == 0:
+	        info = self.parse_sock_info(sockaddr)
+	        info_list.append(info)
+
+	    self.write_int(lenAddr, 0x20)
+	    res = self.call("getpeername", [sock, sockaddr, lenAddr], debug_list = [])
+	    #self.hexdump(sockaddr, 0x20)
+	    if res == 0:
+	        info = self.parse_sock_info(sockaddr)
+	        info_list.append(info)
+
+	    info = " <=> ".join(info_list)
+	    #print(info)
+
+	    sp += stackSize
+	    self.set_reg("sp", sp)
+
+	    return info
+
+	def get_file_info(self, fd):
+	    sp = self.get_reg("sp")
+	    stackSize = 0x100
+	    sp -= stackSize
+	    self.set_reg("sp", sp)
+
+	    fd_path = "/proc/self/fd/%d"%fd
+	    obj_file = sp
+	    self.write_mem(obj_file, '\x00')
+	    res = self.call("readlink", [fd_path, obj_file, 0x100])#, debug_list = ["readlink"])
+	    if res < 0:
+	        info = ""
+	    else:
+	        #print("res:", hex(res))
+	        info = self.read_mem(obj_file, res)
+	        #print("info:", info)
+	    sp += stackSize
+	    self.set_reg("sp", sp)
+
+	    return info
+
+	def get_fd_info(self, fd):
+	    info = self.get_file_info(fd)
+	    if info.startswith("socket:") or info == "":
+	    	new_info = self.get_sock_info(fd)
+	    	if new_info != "":
+	    		info = new_info
+	    return info

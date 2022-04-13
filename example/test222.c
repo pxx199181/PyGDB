@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include <stdio.h>
 #include <sys/socket.h>
 
 int main(int argc, char**argv) {
@@ -29,5 +30,19 @@ int main(int argc, char**argv) {
 		printf("bind error\n");
 	if (setsockopt(listen_fd, SOL_SOCKET, SO_REUSEADDR, (char *)&option, sizeof(option)) < 0)
 		printf("setsockopt error\n");
+	if (listen(listen_fd, 10) < 0)
+		printf("listen error\n");;
+
+	printf("listen_fd:[%d]\n", listen_fd);
+	FILE *fp = fopen("./test222", "rb");
+	int fd = fileno(fp);
+	char data[5] = {0};
+	read(fd, data, 4);
+	printf("fd:[%d] -> data: %s\n", fd, data);
+
+	alarm(60);
+
+	close(fd);
+	close(listen_fd);
 	//return 2;
 }
