@@ -170,6 +170,9 @@ def PyGDB_make_tiny_elf(shellcode, outfile = None, base = None, mode = 32):
 		do_command("chmod +x " + outfile)
 	return elf_bin
 
+class CallException(Exception):
+	pass
+
 class PyGDB():
 	def __init__(self, target = None, args = [], arch = None):
 		self.load_init(target, args, arch)
@@ -201,6 +204,9 @@ class PyGDB():
 		self.io = None
 		self.gdb_pid = None
 		self.dbg_pid = None
+
+		self.safe_call_addr = None
+		self.safe_call_ticket = False
 
 		self.is_local = False
 		self.code_base = None
@@ -354,6 +360,9 @@ class PyGDB():
 		self.arch_args = args
 		self.do_gdb_ret("set args %s"%(" ".join(self.arch_args)))
 
+	def set_call_addr(self, use_addr = None):
+		self.safe_call_addr = use_addr# + 0x4
+
 	def start(self):
 		self.is_local = True
 		result = self.do_gdb_ret("start")
@@ -451,22 +460,27 @@ class PyGDB():
 		return data[b_pos:e_pos]
 
 
-	def set_bp(self, addr, temp = False, hard = False, is_pie = False):
-		cmdline = ""
+	def set_bp(self, addr, temp = False, hard = False, is_pie = False, thread_id = None):
+
+		cmd = "break"
+		if hard:
+			cmd = "h" + cmd
 		if temp:
-			cmdline = "temp"
-		elif hard: 
-			cmdline = "hard"
-
-		origin_addr = addr
-		addr = self.real_addr(addr, is_pie)
-
-
+			cmd = "t" + cmd
 		if type(addr) is str:
 			addr = self.get_symbol_value(addr)
-		addr_str = "0x%x"%addr
+		else:
+			addr = self.real_addr(addr, is_pie)
+		addr_str = "*0x%x"%addr
 
-		ret_v = self.do_pygdb_ret("set_breakpoint %s %s"%(addr_str, cmdline))
+		if thread_id is None:
+			cmdline = "%s %s"%(cmd, addr_str)
+		else:
+			if thread_id == True:
+				thread_id = self.get_thread_idv()
+			cmdline = "%s %s thread %d"%(cmd, addr_str, thread_id)
+			#print("thread_set_bp:", cmdline)
+		ret_v = self.do_gdb_ret(cmdline)
 		#print "ret_v:", ret_v
 		b_num = re.search("reakpoint \d+ at", ret_v)
 		if b_num:
@@ -498,13 +512,22 @@ class PyGDB():
 		return self.do_pygdb_ret("get_breakpoint %s"%(cmdline))
 
 
-	def set_mem_bp(self, addr, w_type = "watch"):
-		if type(addr) is not str:
-			addr_str = "*0x%x"%addr
-		else:
-			addr_str = addr
+	def set_mem_bp(self, addr, w_type = "watch", thread_id = None):
+		
+		if type(addr) is str:
+			addr = self.get_symbol_value(addr)
+		addr_str = "*0x%x"%addr
 
-		ret_v = self.do_gdb_ret("%s %s"%(w_type, addr_str))
+		suffix = ""
+		if thread_id is None:
+			suffix = ""
+		else:
+			if thread_id == True:
+				thread_id = self.get_thread_idv()
+			suffix = "thread %d"%(thread_id)
+		cmdline = "%s %s %s"%(w_type, addr_str, suffix)
+
+		ret_v = self.do_gdb_ret(cmdline)
 		#print ret_v
 		b_num = re.search("atchpoint \d+:", ret_v)
 		if b_num:
@@ -520,14 +543,14 @@ class PyGDB():
 			return fini_num, addr_v
 		return None, None
 
-	def watch(self, addr):
-		return self.set_mem_bp(addr, "watch")
+	def watch(self, addr, thread_id = None):
+		return self.set_mem_bp(addr, "watch", thread_id = thread_id)
 
-	def awatch(self, addr):
-		return self.set_mem_bp(addr, "awatch")
+	def awatch(self, addr, thread_id = None):
+		return self.set_mem_bp(addr, "awatch", thread_id = thread_id)
 
-	def rwatch(self, addr):
-		return self.set_mem_bp(addr, "rwatch")
+	def rwatch(self, addr, thread_id = None):
+		return self.set_mem_bp(addr, "rwatch", thread_id = thread_id)
 
 	def set_catch_bp(self, name, catch_type = "syscall"):
 		if type(name) is not str:
@@ -999,48 +1022,49 @@ class PyGDB():
 				addr += self.get_codebase()
 		return addr
 
-	def hook(self, addr, handler, args = [], hook_ret = None, is_pie = False):
+	def hook(self, addr, handler, args = [], hook_ret = None, is_pie = False, thread_id = None):
 		addr = self.real_addr(addr, is_pie)
 
 		if addr in self.hook_map.keys():
 			self.remove_hook(addr)
 
 		#print("call hook")
-		num, addr_v = self.set_bp(addr)
+		num, addr_v = self.set_bp(addr, thread_id = thread_id)
 		if hook_ret is not None and hook_ret != False:
 			if hook_ret == True or hook_ret == 1:
 				ret_addr = self.find_ret(addr)
 			else:
-				ret_addr = hook_ret
-			num_ret, addr_v_ret = self.set_bp(ret_addr) 
+				ret_addr = self.real_addr(hook_ret, is_pie)
+
+			num_ret, addr_v_ret = self.set_bp(ret_addr, thread_id = thread_id)
 			self.hook_map[ret_addr] = [num_ret, handler, args, ret_addr, ["OnRet", None, None]]
 		else:
 			num_ret, ret_addr = None, None
 		self.hook_map[addr_v] = [num, handler, args, addr, ["OnEnter", num_ret, ret_addr]]
 		return addr_v
 
-	def hook_mem_read(self, addr, handler, args = []):
-		return self.hook_mem(addr, handler, args, "rwatch")
+	def hook_mem_read(self, addr, handler, args = [], thread_id = None):
+		return self.hook_mem(addr, handler, args, "rwatch", thread_id = thread_id)
 
-	def hook_mem_write(self, addr, handler, args = []):
-		return self.hook_mem(addr, handler, args, "watch")
+	def hook_mem_write(self, addr, handler, args = [], thread_id = None):
+		return self.hook_mem(addr, handler, args, "watch", thread_id = thread_id)
 
-	def hook_mem_access(self, addr, handler, args = []):
-		return self.hook_mem(addr, handler, args, "awatch")
+	def hook_mem_access(self, addr, handler, args = [], thread_id = None):
+		return self.hook_mem(addr, handler, args, "awatch", thread_id = thread_id)
 
-	def hook_mem(self, addr, handler, args = [], w_type = "w"):
+	def hook_mem(self, addr, handler, args = [], w_type = "w", thread_id = None):
 		if addr in self.hook_map.keys():
 			self.remove_hook(addr)
 
 		if w_type.startswith("a"):
-			num, addr_v = self.awatch(addr)
+			num, addr_v = self.awatch(addr, thread_id = thread_id)
 			w_type = "awatch"
 		elif w_type.startswith("r"):
-			num, addr_v = self.rwatch(addr)
+			num, addr_v = self.rwatch(addr, thread_id = thread_id)
 			w_type = "rwatch"
 		else:
 			w_type = "watch"
-			num, addr_v = self.watch(addr)
+			num, addr_v = self.watch(addr, thread_id = thread_id)
 		num_ret, ret_addr = None, None
 
 		self.hook_map[addr_v] = [num, handler, args, addr, ["OnMem", w_type]]
@@ -1131,14 +1155,18 @@ class PyGDB():
 		#print("run_until: 0x%x"%addr)
 		#self.interact()
 		addr = self.real_addr(addr, is_pie)
-		num, addr_v = self.set_bp(addr)
+		#num, addr_v = self.set_bp(addr)
+		num, addr_v = self.set_bp(addr, temp = True, thread_id = True)
 		while True:
 			try:
 				msg = self._continue()
 				sign, pc = self.DealHook(msg)
+				#print(msg)
+				#if "SIGSEGV" in msg:
+				#	self.interact()
 				#print("addr_v: 0x%x -> 0x%x"%(addr_v, pc))
 				if pc == addr_v:
-					self.del_bp(num)
+					#self.del_bp(num)
 					return pc
 			except KeyboardInterrupt:
 				print('[+] ' + 'Interrupted')
@@ -1390,16 +1418,64 @@ class PyGDB():
 			size = value[1]
 			self.write_mem(addr, data[offset:offset+size])
 
+	def call_lock(self):
+		if self.safe_call_ticket == True:
+			return False
+		self.safe_call_ticket = True
+		return True
+		
+	def call_unlock(self):
+		if self.safe_call_ticket == False:
+			return False
+		self.safe_call_ticket = False
+		return True
+
+	def thread_lock(self):
+		#print("thread_lock")
+		self.thread_scheduler("on")
+
+	def thread_unlock(self):
+		#print("thread_unlock")
+		self.thread_scheduler("off")
+
+	def thread_step(self):
+		self.thread_scheduler("step")
+
+	def thread_scheduler(self, info):
+		self.do_gdb("set scheduler-locking %s"%info)
+
+	def show_scheduler(self):
+		return self.do_gdb_ret("show scheduler-locking")
+
 	def call(self, func, args = [], lib_path = "libc", use_addr = None, call_reg = None, debug_list = [], debug_mode = 0):
+		if self.call_lock() == False:
+			raise CallException("call reenter, flood")
+
+		#print("call realize")
+		res = self.call_realize(func, args, lib_path, use_addr, call_reg, debug_list, debug_mode)
+		#print("call realize over")
+
+		if self.call_unlock() == False:
+			raise CallException("error in call")
+
+		return res
+
+	def call_realize(self, func, args = [], lib_path = "libc", use_addr = None, call_reg = None, debug_list = [], debug_mode = 0):
 		"""
 		args = [arg0, arg1, arg2, ...]
 		"""
+
+		#print("call enter")
+		#print(self.get_code(6))
+
 		if io_wrapper == "zio":
 			print("please install pwntools")
 			return 
 
 		if debug_list is None or debug_list == False:
 			debug_list = []
+		elif debug_list == True:
+			debug_list = [func]
 		elif type(debug_list) != list:
 			debug_list = [debug_list]
 
@@ -1439,10 +1515,14 @@ class PyGDB():
 		self.set_reg("sp", sp)
 		args = args_new
 
+		if use_addr is None:
+			use_addr = self.safe_call_addr
+
 		old_data = ""
 		if use_addr is None:
 			use_addr = pc
 		else:
+			use_addr += 4
 			self.set_reg("pc", use_addr)
 
 		nop_step_info = ""
@@ -1450,10 +1530,11 @@ class PyGDB():
 			if call_reg is None:
 				call_reg = "r%d"%len(args)
 			self.set_reg(call_reg, func_addr)
-			asm_info = ""
-			asm_info += "blx %s\n"%call_reg
-			asm_info += "mov r0, r0"
 			nop_step_info = "mov r0, r0"
+			asm_info = ""
+			asm_info += nop_step_info + "\n"
+			asm_info += "blx %s\n"%call_reg
+			asm_info += nop_step_info 
 		else:
 			if call_reg is None:
 				if "64" in self.arch:
@@ -1462,10 +1543,11 @@ class PyGDB():
 					call_reg = "eax"
 
 			self.set_reg(call_reg, func_addr)
-			asm_info = ""
-			asm_info += "call %s\n"%call_reg
-			asm_info += "nop"
 			nop_step_info = "nop"
+			asm_info = ""
+			asm_info += nop_step_info + "\n"
+			asm_info += "call %s\n"%call_reg
+			asm_info += nop_step_info
 		
 
 		data = self._asm_(asm_info, use_addr)#, arch = self.arch, os = "linux")
@@ -1502,7 +1584,7 @@ class PyGDB():
 		#print "nop_step_data", nop_step_data.encode("hex")
 		
 		#sp = self.get_reg("sp")
-		old_data = self.read_mem(pc-len(nop_step_data), len(nop_step_data) + len(data))
+		old_data = self.read_mem(use_addr-len(nop_step_data), len(nop_step_data) + len(data))
 		self.write_mem(use_addr, data)
 
 		repair_stack_offset = 0
@@ -1533,25 +1615,39 @@ class PyGDB():
 
 				self.set_reg("sp", sp)
 
-		#if func == "printf":
-		#	self.interact()
-		if func in debug_list:
+
+		self.stepi()
+		test_step = 3
+		while self.get_reg("pc") != use_addr + len(nop_step_data) and test_step > 0:
+			self.set_reg('pc', use_addr)
 			self.stepi()
+			test_step -= 1
+		next_step -= 1
+
+		#raw_input(":")
+		if func in debug_list:
+			#self.stepi()
+			#print("use_addr:", hex(use_addr))
 			if debug_mode == 0:
 				self.interact_pygdb()
 			else:
 				self.interact()
 
+		#print(self.get_code(4))
 		if len(self.hook_map.keys()) != 0:
+			#print("here1")
 			self.run_until(next_addr)
 		else:
+			#self.interact()
 			for i in range(next_step):
 				#print("i:", i)
 				#print(self.get_code())
 				self.stepo()
+			#print("here2")
 			if self.get_reg("pc") != next_addr:
 				self.run_until(next_addr)
-
+			#print("over")
+		
 		cur_pc = self.get_reg("pc")
 		if cur_pc != next_addr:
 			print("cur_pc != next_addr")
@@ -1578,6 +1674,9 @@ class PyGDB():
 				ret_v = self.get_reg("rax")
 			else:
 				ret_v = self.get_reg("eax")
+
+		#print("call ret")
+		#print(self.get_code(6))
 
 		return ret_v
 
@@ -2558,9 +2657,10 @@ int main() {
 			#self.priv_globals["lib_base"] = {}
 
 		args = [lib_path + "\x00", 1] #LAZY
-		self.priv_globals["lib_base"][lib_path] = self.call(self.priv_globals["dlopen"], args)
+		self.priv_globals["lib_base"][lib_path] = self.call(self.priv_globals["dlopen"], args)#, debug_list = [self.priv_globals["dlopen"]])
 		self.priv_globals['lib_path'][lib_path] = lib_path
-		#print "libc:", hex(self.priv_globals["lib_base"])
+		#print(self.priv_globals["lib_base"])
+		#print "lib_base:", hex(self.priv_globals["lib_base"])
 		self.restore_context()
 		return self.priv_globals["lib_base"][lib_path]
 
@@ -2699,7 +2799,7 @@ int main() {
 	def chg_thread(self, thread_id):
 		cur_thread_id = self.get_thread_idv()
 		#print("chg_thread:", cur_thread_id, thread_id)
-		self.do_gdb("thread %d"%thread_id)
+		return self.do_gdb_ret("thread %d"%thread_id)
 
 	def skip_reason(self, skip_sign):
 		if skip_sign == 1:
@@ -3088,6 +3188,28 @@ int main() {
 		self.restore_context()
 		return result
 
+	def invoke_t(self, func, *args, **kwrds):
+		self.thread_lock()
+		result = func(*args, **kwrds)
+		self.thread_unlock()
+		return result
+
+	def invoke_st(self, func, *args, **kwrds):
+		self.save_context()
+
+		#print("lock status")
+		#print(self.show_scheduler())
+		self.thread_lock()
+		#print(self.show_scheduler())
+		result = func(*args, **kwrds)
+
+		#print("unlock status")
+		#print(self.show_scheduler())
+		self.thread_unlock()
+		#print(self.show_scheduler())
+		self.restore_context()
+		return result
+
 	def __getattr__(self, key):
 		#print "__getattr__", key
 		if key in self.__dict__:
@@ -3104,6 +3226,26 @@ int main() {
 					func = getattr(PyGDB, real_key)
 					args = [self] + list(args)
 					return self.invoke_s(func, *args, **kwrds)
+				return wrap
+
+		elif key.endswith("_t"):
+			real_key = key[:-2]
+			if real_key in PyGDB.__dict__:
+				#print "real_key in"
+				def wrap(*args, **kwrds):
+					func = getattr(PyGDB, real_key)
+					args = [self] + list(args)
+					return self.invoke_t(func, *args, **kwrds)
+				return wrap
+
+		elif key[-3:] in ["_ts", "_st"]:
+			real_key = key[:-3]
+			if real_key in PyGDB.__dict__:
+				#print "real_key in"
+				def wrap(*args, **kwrds):
+					func = getattr(PyGDB, real_key)
+					args = [self] + list(args)
+					return self.invoke_st(func, *args, **kwrds)
 				return wrap
 		raise AttributeError("'module' object has no attribute '%s'" % key)
 
@@ -3355,7 +3497,7 @@ int main() {
 			last_count = count
 
 	def inject_hook_free(self, addr, size = None):
-		#print("      free in:", hex(addr), hex(size))
+		#print("	  free in:", hex(addr), hex(size))
 		if addr in self.inject_patch_map.keys():
 			#self.inject_patch_map.pop(addr)
 			use_size = self.remvoe_inject_patch(addr)
@@ -3366,7 +3508,7 @@ int main() {
 			#print("error size")
 			return
 
-		#print("      free on:", hex(addr), hex(size))
+		#print("	  free on:", hex(addr), hex(size))
 		if addr < self.inject_hook_addr and addr + size == self.inject_hook_addr:
 			self.inject_hook_size += self.inject_hook_addr - addr
 			self.inject_hook_addr = addr
@@ -3432,85 +3574,86 @@ int main() {
 
 
 	def parse_sock_info(self, sockaddr):
-	    info = ""
-	    family = self.read_word(sockaddr)
-	    port = self.read_word(sockaddr + 2, "big")
-	    if family == socket.AF_INET:
-	        ip_data = self.read_mem(sockaddr + 4, 4)
-	        ip = self.parse_ip4(ip_data)
-	        info = "%s:%d"%(ip, port)
-	    elif family == socket.AF_INET6:
-	        sp = self.get_reg("sp")
-	        stackSize = 0x40
-	        sp -= stackSize
-	        self.set_reg("sp", sp)
+		info = ""
+		family = self.read_word(sockaddr)
+		port = self.read_word(sockaddr + 2, "big")
+		if family == socket.AF_INET:
+			ip_data = self.read_mem(sockaddr + 4, 4)
+			ip = self.parse_ip4(ip_data)
+			info = "%s:%d"%(ip, port)
+		elif family == socket.AF_INET6:
+			sp = self.get_reg("sp")
+			stackSize = 0x40
+			sp -= stackSize
+			self.set_reg("sp", sp)
 
-	        ipAddr = sp
-	        self.call("inet_ntop", [socket.AF_INET6, sockaddr + 8, ipAddr, 0x20])
-	        ip = self.readString(ipAddr)
-	        info = "[%s]:%d"%(ip, port)
+			ipAddr = sp
+			self.call("inet_ntop", [socket.AF_INET6, sockaddr + 8, ipAddr, 0x20])
+			ip = self.readString(ipAddr)
+			info = "[%s]:%d"%(ip, port)
 
-	        sp += stackSize
-	        self.set_reg("sp", sp)
-	    return info
+			sp += stackSize
+			self.set_reg("sp", sp)
+		return info
 
 	def get_sock_info(self, sock):
-	    sp = self.get_reg("sp")
-	    stackSize = 0x40
-	    sp -= stackSize
-	    self.set_reg("sp", sp)
+		pc = self.get_reg("pc")
+		sp = self.get_reg("sp")
+		stackSize = 0x40
+		sp -= stackSize
 
-	    sockaddr = sp
-	    lenAddr = sp + 0x30
-	    info_list = []
+		self.set_reg("sp", sp)
 
-	    self.write_int(lenAddr, 0x20)
-	    res = self.call("getsockname", [sock, sockaddr, lenAddr], debug_list = [])
-	    #self.hexdump(sockaddr, 0x20)
-	    if res == 0:
-	        info = self.parse_sock_info(sockaddr)
-	        info_list.append(info)
+		sockaddr = sp
+		lenAddr = sp + 0x30
+		info_list = []
 
-	    self.write_int(lenAddr, 0x20)
-	    res = self.call("getpeername", [sock, sockaddr, lenAddr], debug_list = [])
-	    #self.hexdump(sockaddr, 0x20)
-	    if res == 0:
-	        info = self.parse_sock_info(sockaddr)
-	        info_list.append(info)
+		self.write_int(lenAddr, 0x20)
+		res = self.call("getsockname", [sock, sockaddr, lenAddr])#, debug_list = ["getsockname"])
+		#self.hexdump(sockaddr, 0x20)
+		if res == 0:
+			info = self.parse_sock_info(sockaddr)
+			info_list.append(info)
 
-	    info = " <=> ".join(info_list)
-	    #print(info)
+		self.write_int(lenAddr, 0x20)
+		res = self.call("getpeername", [sock, sockaddr, lenAddr], debug_list = [])
+		#self.hexdump(sockaddr, 0x20)
+		if res == 0:
+			info = self.parse_sock_info(sockaddr)
+			info_list.append(info)
 
-	    sp += stackSize
-	    self.set_reg("sp", sp)
+		info = " <=> ".join(info_list)
 
-	    return info
+		sp += stackSize
+		self.set_reg("sp", sp)
+
+		return info
 
 	def get_file_info(self, fd):
-	    sp = self.get_reg("sp")
-	    stackSize = 0x100
-	    sp -= stackSize
-	    self.set_reg("sp", sp)
+		sp = self.get_reg("sp")
+		stackSize = 0x100
+		sp -= stackSize
+		self.set_reg("sp", sp)
 
-	    fd_path = "/proc/self/fd/%d"%fd
-	    obj_file = sp
-	    self.write_mem(obj_file, '\x00')
-	    res = self.call("readlink", [fd_path, obj_file, 0x100])#, debug_list = ["readlink"])
-	    if res < 0:
-	        info = ""
-	    else:
-	        #print("res:", hex(res))
-	        info = self.read_mem(obj_file, res)
-	        #print("info:", info)
-	    sp += stackSize
-	    self.set_reg("sp", sp)
+		fd_path = "/proc/self/fd/%d"%fd
+		obj_file = sp
+		self.write_mem(obj_file, '\x00')
+		res = self.call("readlink", [fd_path, obj_file, 0x100])#, debug_list = ["readlink"])
+		if res < 0:
+			info = ""
+		else:
+			info = self.read_mem(obj_file, res)
+		sp += stackSize
+		self.set_reg("sp", sp)
 
-	    return info
+		return info
 
 	def get_fd_info(self, fd):
-	    info = self.get_file_info(fd)
-	    if info.startswith("socket:") or info == "":
-	    	new_info = self.get_sock_info(fd)
-	    	if new_info != "":
-	    		info = new_info
-	    return info
+		info = self.get_file_info(fd)
+		if info.startswith("socket:") or info == "":
+			pc = self.get_reg("pc")
+			#print("pc before call get_sock_info:", hex(pc))
+			new_info = self.get_sock_info(fd)
+			if new_info != "":
+				info = new_info
+		return info
