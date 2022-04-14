@@ -1837,7 +1837,7 @@ class PyGDB():
 
 		return pid
 
-	def dup_io(self, port = 9999, ip = "0.0.0.0", new_terminal = True):
+	def dup_io(self, port = 9999, ip = "0.0.0.0", new_terminal = True, fd_list = [0, 1, 2]):
 		self.save_context()
 		"""
 		struct sockaddr_in {
@@ -1895,10 +1895,14 @@ class PyGDB():
 		#dup2(client,0)
 		#dup2(client,1)
 		#dup2(client,2)
+		for fd in fd_list:
+			self.call("dup2", [client, fd])
+		
+		"""
 		self.call("dup2", [client, 0])
 		self.call("dup2", [client, 1])
 		self.call("dup2", [client, 2])
-
+		"""
 		self.restore_context()
 
 
@@ -2026,7 +2030,7 @@ class PyGDB():
 
 
 
-	def dup_io_static(self, port = 9999, ip = "0.0.0.0", new_terminal = True):
+	def dup_io_static(self, port = 9999, ip = "0.0.0.0", new_terminal = True, fd_list = [0, 1, 2]):
 		self.save_context()
 		"""
 		struct sockaddr_in {
@@ -2083,9 +2087,14 @@ class PyGDB():
 		#dup2(client,0)
 		#dup2(client,1)
 		#dup2(client,2)
+		for fd in fd_list:
+			self.call_static("dup2", [client, fd])
+		
+		"""
 		self.call_static("dup2", [client, 0])
 		self.call_static("dup2", [client, 1])
 		self.call_static("dup2", [client, 2])
+		"""
 
 		self.restore_context()
 
