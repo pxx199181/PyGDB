@@ -520,8 +520,12 @@ def test_inject_hook():
 	else:
 		use_addr = code_addr
 		use_size = 0x1000
-	#pygdb.config_inject_map(code_addr, 0x1000, globals_map)
+
+		use_addr = pygdb.auto_config_inject()
+		print("codebase:", hex(pygdb.codebase()))
+		print("use_addr:", hex(use_addr))
 	pygdb.config_inject_map(use_addr, use_size, globals_map)
+	#pygdb.config_inject_map(globals_map)
 
 	#pygdb.interact()
 
@@ -536,9 +540,19 @@ def test_inject_hook():
 	pop rdi
 	"""%(data_addr)
 	pygdb.inject_hook(0x40054d, asm_code)#, show = True)
+
+	asm_code = """
+	push rdi
+	push rsi
+	mov rdi, 0x%x
+	call printf
+	pop rsi
+	pop rdi
+	"""%(data_addr)
+	pygdb.inject_hook(0x400556, asm_code, show = True)
 	
 	asm_code = "nop"
-	pygdb.inject_hook(0x40055A, asm_code)
+	pygdb.inject_hook(0x40055C, asm_code)
 
 	pygdb.inject_patch_asm(0x4004ED, "nop")
 
