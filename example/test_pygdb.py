@@ -294,7 +294,13 @@ def test_dup_io():
 	pygdb.run()
 	pygdb.del_bp(b_id)
 
-	pygdb.dup_io(port = 12345, new_terminal = True)
+	mode = raw_input("static?(1:yes, 0:no)").strip()
+	if mode == "1":
+		pygdb.dup_io_static(port = 12345, new_terminal = True, fd_list = [0])
+		pygdb.dup_io_static(port = 12346, new_terminal = True, fd_list = [1,2])
+	else:
+		pygdb.dup_io(port = 12345, new_terminal = True, fd_list = [0])
+		pygdb.dup_io(port = 12346, new_terminal = True, fd_list = [1,2])
 	#pygdb.dup_io(port = 12345, new_terminal = False)
 	pygdb.hook(0x400883, hook, [])
 	pygdb.Continue()
