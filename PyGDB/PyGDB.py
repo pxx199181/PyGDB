@@ -250,14 +250,14 @@ class PyGDB():
 
 		self.arch_args = []
 		self.context_regs = []
-		if self.arch.lower() in ["arch64", "arm"]:
+		if self.is_arm():
 			self.peda_file = os.path.join(peda_dir, "peda-arm.py")
 			
 			for i in range(13):
 				self.arch_args.append("r%d"%i)
 
 			self.context_regs = ["sp"]
-			if "64" in self.arch:
+			if self.bits == 64:
 				for i in range(13):
 					self.context_regs.append("r%d"%i)
 			else:
@@ -266,7 +266,7 @@ class PyGDB():
 			self.context_regs.append("cpsr")
 		else:
 			self.peda_file = os.path.join(peda_dir, "peda-intel.py")
-			if "64" in self.arch:
+			if self.bits == 64:
 				self.arch_args = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"]
 				self.context_regs = ["rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rbp", "rsp", "rip", "r8", "r9", "r11", "r12", "r13", "r14", "r15"]
 			else:
@@ -285,6 +285,12 @@ class PyGDB():
 
 		if self.bin_path is not None:
 			self.do_gdb("file %s"%self.bin_path)
+
+	def is_arm(self):
+		if self.arch.lower() in ["arm", "arch64"]:
+			return True
+		else:
+			return False
 
 	def getarch(self):
 		capsize = 0
@@ -1337,7 +1343,7 @@ class PyGDB():
 		prot = self.prot_eval(prot_value)
 
 		shellcode_asm = shellcraft.mmap(addr, size, prot, 0x22, -1, 0)
-		shellcode = asm(shellcode_asm)
+		shellcode = self._asm_(shellcode_asm)
 
 		pc = self.get_reg("pc")
 		old_data = self.read_mem(pc, len(shellcode))
@@ -1347,6 +1353,8 @@ class PyGDB():
 		self.run_until(pc + len(shellcode))
 		self.write_mem(pc, old_data)
 		self.set_reg("pc", pc)
+
+		return self.get_result()
 
 	def prot_eval(self, prot_value):
 
@@ -1460,6 +1468,17 @@ class PyGDB():
 
 		return res
 
+	def get_result(self):
+		ret_v = 0
+		if self.is_arm():
+			ret_v = self.get_reg("r0")
+		else:
+			if self.bits == 64:
+				ret_v = self.get_reg("rax")
+			else:
+				ret_v = self.get_reg("eax")
+		return ret_v
+
 	def call_realize(self, func, args = [], lib_path = "libc", use_addr = None, call_reg = None, debug_list = [], debug_mode = 0):
 		"""
 		args = [arg0, arg1, arg2, ...]
@@ -1503,7 +1522,7 @@ class PyGDB():
 			else:
 				args_new.append(item)
 
-		if "64" in self.arch:
+		if self.bits == 64:
 			#sp -= sp%0x8
 			#align by 0x10
 			sp -= sp%0x10
@@ -1526,7 +1545,7 @@ class PyGDB():
 			self.set_reg("pc", use_addr)
 
 		nop_step_info = ""
-		if self.arch.lower() in ["arm", "arch64"]:
+		if self.is_arm():
 			if call_reg is None:
 				call_reg = "r%d"%len(args)
 			self.set_reg(call_reg, func_addr)
@@ -1537,7 +1556,7 @@ class PyGDB():
 			asm_info += nop_step_info 
 		else:
 			if call_reg is None:
-				if "64" in self.arch:
+				if self.bits == 64:
 					call_reg = "rax"
 				else:
 					call_reg = "eax"
@@ -1590,11 +1609,11 @@ class PyGDB():
 		repair_stack_offset = 0
 
 		#print [hex(c) for c in args]
-		if self.arch.lower() in ["arm", "arch64"]:
+		if self.is_arm():
 			for i in range(len(args)):
 				self.set_reg("r%d"%i, args[i])
 		else:
-			if "64" in self.arch:
+			if self.bits == 64:
 				reg_names = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"]
 
 				less_count = 6 if (len(args) > 6) else len(args)
@@ -1666,19 +1685,7 @@ class PyGDB():
 		self.set_reg("pc", pc)
 		self.set_reg("sp", origin_sp)
 
-		ret_v = 0
-		if self.arch.lower() in ["arm", "arch64"]:
-			ret_v = self.get_reg("r0")
-		else:
-			if "64" in self.arch:
-				ret_v = self.get_reg("rax")
-			else:
-				ret_v = self.get_reg("eax")
-
-		#print("call ret")
-		#print(self.get_code(6))
-
-		return ret_v
+		return self.get_result()
 
 	def get_symbol_value(self, name):
 		#self.interact()
@@ -1735,7 +1742,7 @@ class PyGDB():
 			real_addr = self.get_symbol_value(got_name)
 		#if real_addr == 0:
 		#	print "[!]", got_name, ":", hex(real_addr)
-		if "64" in self.arch:
+		if self.bits == 64:
 			self.write_long(got_addr, real_addr)
 		else:
 			self.write_int(got_addr, real_addr)
@@ -1920,7 +1927,7 @@ class PyGDB():
 			else:
 				args_new.append(item)
 
-		if "64" in self.arch:
+		if self.bits == 64:
 			sp -= sp%8
 		else:
 			sp -= sp%4
@@ -1957,7 +1964,7 @@ class PyGDB():
 				else:
 					args_new.append(item)
 
-			if "64" in self.arch:
+			if self.bits == 64:
 				sp -= sp%8
 			else:
 				sp -= sp%4
@@ -1986,7 +1993,7 @@ class PyGDB():
 		pc = self.get_reg("pc")
 
 		nop_step_info = ""
-		if self.arch.lower() in ["arm", "arch64"]:
+		if self.is_arm():
 			nop_step_info = "mov r0, r0"
 		else:
 			nop_step_info = "nop"
@@ -2004,17 +2011,8 @@ class PyGDB():
 			self.stepi()
 			self.write_mem(pc-nop_step_sz, old_data[:nop_step_sz])
 
-		ret_v = 0
-		if self.arch.lower() in ["arm", "arch64"]:
-			ret_v = self.get_reg("r0")
-		else:
-			if "64" in self.arch:
-				ret_v = self.get_reg("rax")
-			else:
-				ret_v = self.get_reg("eax")
-
-		#print "run_shellcode:", ret_v
-		return ret_v
+		
+		return self.get_result()
 
 	def parse_ip4(self, ip):
 		data_list = []
@@ -2164,8 +2162,8 @@ class PyGDB():
 		if option == "":
 			option += " -fno-stack-protector"
 
-		if self.arch.lower() not in ["arm", "arch64"]:
-			if "64" not in self.arch:
+		if self.is_arm() == False:
+			if self.bits != 64:
 				option += " -m32"
 
 		source_data = self.gen_from_syscall(source_data)
@@ -2241,7 +2239,7 @@ class PyGDB():
 
 		return content
 
-	def _asm_(self, asm_info, vma):
+	def _asm_(self, asm_info, vma = None):
 		if io_wrapper == "zio":
 			print("please install pwntools")
 			return
@@ -2259,7 +2257,7 @@ class PyGDB():
 
 		return asm(asm_info, vma = vma)
 
-	def _disasm_(self, data, vma):
+	def _disasm_(self, data, vma = None):
 		if io_wrapper == "zio":
 			print("please install pwntools")
 			return
@@ -3421,7 +3419,10 @@ int main() {
 				print(new_asm_code)
 				print("-"*0x10)
 
+			#print("new_asm_code:")
+			#print(new_asm_code)
 			patch_code = self._asm_(new_asm_code, self.inject_hook_addr)
+			#print("new_asm_code ok:")
 
 			patch_addr = self.inject_hook_alloc(patch_code)
 			if patch_addr != 0:
@@ -3540,12 +3541,27 @@ int main() {
 				#print("pop here2")
 				self.inject_free_map.pop(addr)
 
-	def config_inject_map(self, addr, size, globals_map = {}):
-		self.inject_hook_base = addr
-		self.inject_hook_size = size
-		self.inject_hook_addr = addr
-		for key in globals_map.keys():
-			self.inject_hook_globals[key] = globals_map[key]
+	def config_inject_map(self, addr = None, size = None, globals_map = None):
+		if addr is not None:
+			self.inject_hook_base = addr
+			self.inject_hook_addr = addr
+		if size is not None:
+			self.inject_hook_size = size
+		if globals_map is not None:
+			for key in globals_map.keys():
+				self.inject_hook_globals[key] = globals_map[key]
+
+	def auto_config_inject(self, size = 0x2000, flag = "rwx"):
+		cur_addr = self.codebase() + 0x600000
+		size = 0x2000
+		while cur_addr < self.codebase() + 0x4000000:
+			res = self.mmap(cur_addr, size, flag)
+			if res != 0:
+				return res
+			cur_addr += 0x2000
+		if res != 0:
+			self.config_inject_map(res, size)
+		return res
 
 	def inject_into_file(self, infile, outfile = None, base = 0):
 		file_data = self.readfile(infile)
