@@ -488,11 +488,15 @@ def test_inject():
 	return
 
 def test_inject_hook():
+	
 	pygdb = PyGDB(target = "./test_hook")
+	#pygdb.hook(0x40054d, hook_test, [0, 0x40054d, "call printf",])
+	#pygdb.hook(0x400552, hook_out, [0, 0x400552, "cmp",])
+
 	pygdb.start()
 
 	pygdb.setvbuf0()
-	pygdb.dup_io(port = 12345, new_terminal = True)
+	pygdb.dup_io(port = 12346, new_terminal = True)
 	import time
 	time.sleep(2)
 
@@ -504,6 +508,9 @@ def test_inject_hook():
 	}
 
 	pygdb.init_map_config(map_config)
+
+	#pygdb.core_inject_init()
+	#pygdb.interact()
 
 	globals_map = {}
 	bin_elf = ELF("./test_hook")
@@ -520,43 +527,57 @@ def test_inject_hook():
 	else:
 		use_addr = code_addr
 		use_size = 0x1000
-
-		use_addr = pygdb.auto_config_inject()
-		print("codebase:", hex(pygdb.codebase()))
-		print("use_addr:", hex(use_addr))
+	#pygdb.config_inject_map(code_addr, 0x1000, globals_map)
 	pygdb.config_inject_map(use_addr, use_size, globals_map)
-	#pygdb.config_inject_map(globals_map)
 
 	#pygdb.interact()
 
 	message_data = "inject_hook\n\x00"
 	data_addr = pygdb.inject_hook_alloc(message_data)
 	asm_code = """
-	push rdi
-	push rsi
 	mov rdi, 0x%x
 	call printf
-	pop rsi
-	pop rdi
 	"""%(data_addr)
-	pygdb.inject_hook(0x40054d, asm_code)#, show = True)
+	pygdb.inject_hook_asm(0x40054d, asm_code, show = True)
 
-	asm_code = """
-	push rdi
-	push rsi
-	mov rdi, 0x%x
-	call printf
-	pop rsi
-	pop rdi
-	"""%(data_addr)
-	pygdb.inject_hook(0x400556, asm_code, show = True)
+	#pygdb.core_inject_hook_func(0x40055A, "show_contenxt", show = True)
+	#pygdb.set_bp(0x40055A, temp = True, thread_id = True)
+	#pygdb.interact()
+
+	#code = pygdb._asm_("mov rdi, 0x0")
+	#pygdb.inject_hook_code(0x40054d, code, show = True)
 	
-	asm_code = "nop"
-	pygdb.inject_hook(0x40055C, asm_code)
+	c_source = """
+#include "pygdb/context.h"
+#include <stdio.h>
+void show_contenxt(context* ctx) {
+	printf("in context\\n");
+	printf("rax: 0x%llx\\n", ctx->rax);
+	printf("rbx: 0x%llx\\n", ctx->rbx);
+	printf("rcx: 0x%llx\\n", ctx->rcx);
+	printf("hook addr: 0x%llx\\n", ctx->rip);
+	printf("hook rsp: 0x%llx\\n", ctx->rsp);
+}
+	"""
+	#plt_maps = pygdb.load_source_lib(c_source, obj_name = "inject_hook.so")
+	plt_maps = pygdb.load_cfile_lib("inject_hook.c", obj_name = "inject_hook.so")
+	print("plt_maps:", plt_maps)
+	pygdb.core_inject_hook_func(0x40055A, "show_contenxt", show = True)
 
 	pygdb.inject_patch_asm(0x4004ED, "nop")
 
+	#pygdb.set_bp(0x40055A, temp = True, thread_id = True)
+	#pygdb.Continue()
+	#pygdb.interact()
+
+	pygdb.set_bp(0x40055A)
+	for i in range(5):
+		pygdb.Continue()
+	#pygdb.interact()
+	pygdb.interact_pygdb()
+	
 	pygdb.run_until(0x400562)
+	pygdb.interact()
 
 	if choice == "1":
 		pygdb.inject_into_file("./test_hook", "./test_hook_p", base = 0x400000)
@@ -571,6 +592,7 @@ def test_inject_hook():
 	print("")
 	print("after remove_inject_hook")
 	pygdb.show_inject_info()
+
 
 	pygdb.inject_hook_free(data_addr, len(message_data))
 	print("")
@@ -590,6 +612,7 @@ def test_inject_hook():
 	print("stage 2")
 	pygdb.set_reg("pc", 0x0400526)
 	pygdb.run_until(0x400562)
+
 	pygdb.interact()
 
 def test_fd():

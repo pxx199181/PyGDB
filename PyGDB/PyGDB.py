@@ -24,6 +24,7 @@ import string
 import sys
 import commands
 import socket
+import hashlib
 
 reload(sys)
 sys.setdefaultencoding('utf-8')
@@ -150,6 +151,20 @@ def PyGDB_writefile(filename, data, mode = "wb"):
 def PyGDB_appendfile(filename, data, mode = "ab+"):
 	PyGDB_writefile(filename, data, mode)
 
+def PyGDB_hash(data, func = "md5"):
+	if func == "md5":
+		instants = hashlib.md5()
+	elif func == "sha1":
+		instants = hashlib.sha1()
+	elif func == "sha224":
+		instants = hashlib.sha224()
+	elif func == "sha256":
+		instants = hashlib.sha256()
+	elif func == "sha512":
+		instants = hashlib.sha512()
+	instants.update(data)
+	return instants.hexdigest()
+
 #https://www.muppetlabs.com/~breadbox/software/tiny/teensy.html
 def PyGDB_make_tiny_elf(shellcode, outfile = None, base = None, mode = 32):
 	if mode == 32:
@@ -184,6 +199,7 @@ class PyGDB():
 		while os.path.islink(PYGDBFILE):
 			PYGDBFILE = os.path.abspath(os.path.join(os.path.dirname(PYGDBFILE), os.path.expanduser(os.readlink(PYGDBFILE))))
 		peda_dir = os.path.join(os.path.dirname(PYGDBFILE), "peda-arm")
+		self.pygdb_libpath = os.path.join(os.path.dirname(PYGDBFILE), "lib")
 		#print("peda_dir:", peda_dir)
 
 		if target is not None:
@@ -195,6 +211,7 @@ class PyGDB():
 
 		self.globals = {}
 		self.priv_globals = {}
+		self.priv_globals["lib_handle"] = {}
 		self.priv_globals["lib_base"] = {}
 		self.priv_globals["lib_path"] = {}
 		self.priv_globals["lib_elf"] = {}
@@ -219,7 +236,14 @@ class PyGDB():
 		self.inject_hook_size = 0x0
 		self.inject_patch_map = {}
 		self.inject_free_map = {}
+
+		self.inject_hook_auto = True
+
+		self.inject_hook_context = {}
+
 		self.inject_hook_globals = {}
+
+		self.core_pygdb_maps = {}
 
 		self.target_argv = ""
 		if type(args) == str:
@@ -250,27 +274,52 @@ class PyGDB():
 
 		self.arch_args = []
 		self.context_regs = []
+		self.pc_reg = ""
+		self.sp_reg = ""
 		if self.is_arm():
 			self.peda_file = os.path.join(peda_dir, "peda-arm.py")
 			
-			for i in range(13):
-				self.arch_args.append("r%d"%i)
-
 			self.context_regs = ["sp"]
 			if self.bits == 64:
-				for i in range(13):
-					self.context_regs.append("r%d"%i)
+				for i in range(32):
+					self.context_regs.append("x%d"%i)
+					self.arch_args.append("x%d"%i)
+				self.sp_reg = "x29"
+				self.pc_reg = "x31"
 			else:
+				self.sp_reg = "r13"
+				self.pc_reg = "r15"
 				for i in range(16):
 					self.context_regs.append("r%d"%i)
+					self.arch_args.append("r%d"%i)
 			self.context_regs.append("cpsr")
 		else:
 			self.peda_file = os.path.join(peda_dir, "peda-intel.py")
 			if self.bits == 64:
+				self.sp_reg = "rsp"
+				self.pc_reg = "rip"
 				self.arch_args = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"]
 				self.context_regs = ["rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rbp", "rsp", "rip", "r8", "r9", "r11", "r12", "r13", "r14", "r15"]
 			else:
+				self.sp_reg = "esp"
+				self.pc_reg = "eip"
 				self.context_regs = ["eax", "ebx", "ecx", "edx", "esi", "edi", "ebp", "esp", "eip"]
+
+
+		if self.bits == 64:
+			self.pop_asm = "popq"
+			self.push_asm = "pushq"
+		else:
+			self.pop_asm = "pop"
+			self.push_asm = "push"
+
+		if self.is_arm():
+			self.common_reg = "r0"
+		elif self.bits == 64:
+			self.common_reg = "rax"
+		else:
+			self.common_reg = "eax"
+		self.mov_asm = "mov"
 
 		self.gdb_argv = []
 		self.gdb_argv.append(self.gdb_path)
@@ -363,8 +412,8 @@ class PyGDB():
 	def set_args(self, args):
 		if type(args) == str:
 			args = args.split(" ")
-		self.arch_args = args
-		self.do_gdb_ret("set args %s"%(" ".join(self.arch_args)))
+		self.target_args = args
+		self.do_gdb_ret("set args %s"%(" ".join(self.target_args)))
 
 	def set_call_addr(self, use_addr = None):
 		self.safe_call_addr = use_addr# + 0x4
@@ -789,6 +838,7 @@ class PyGDB():
 		self.show_context()
 		while True:
 			try:
+				cont_sign = False
 				data = raw_input(prompt).strip()
 				if len(data) == 0:
 					data = last_data
@@ -808,6 +858,7 @@ class PyGDB():
 					#if pc == -1:
 					#	self.do_pygdb_syn()
 					msg = ""
+					cont_sign = True
 				elif "context".startswith(data):
 					self.show_context()
 					continue
@@ -819,7 +870,7 @@ class PyGDB():
 					sign, pc = self.DealHook(msg)
 
 				cur_pc = self.get_reg("pc")
-				if cur_pc != last_pc:
+				if cur_pc != last_pc or cont_sign == True:
 					self.show_context()
 				last_pc = cur_pc
 
@@ -959,6 +1010,19 @@ class PyGDB():
 
 	def read_long(self, addr, endian = "little"):
 		return u64(self.read_mem(addr, 8), endian = endian)
+
+	def read_pointer(self, addr, endian = "little"):
+		if self.bits == 64:
+			return self.read_long(addr, endian = endian)
+		elif self.bits == 32:
+			return self.read_int(addr, endian = endian)
+		return 0
+
+	def write_pointer(self, addr, value, endian = "little"):
+		if self.bits == 64:
+			return self.write_long(addr, value, endian = endian)
+		elif self.bits == 32:
+			return self.write_int(addr, value, endian = endian)
 
 	def write_byte(self, addr, value):
 		self.write_mem(addr, p8(value))
@@ -1380,7 +1444,9 @@ class PyGDB():
 			value = map_config[addr]
 			size = value[0]
 			flag = value[1]
-			self.mmap(addr, size, flag)
+			addr_use = self.mmap(addr, size, flag)
+			if addr_use != addr:
+				raise Exception("init_map_config error:", hex(addr), "=>", hex(addr_use))
 
 	def readfile(self, filename, mode = "rb"):
 		return PyGDB_readfile(filename, mode)
@@ -1456,15 +1522,15 @@ class PyGDB():
 		return self.do_gdb_ret("show scheduler-locking")
 
 	def call(self, func, args = [], lib_path = "libc", use_addr = None, call_reg = None, debug_list = [], debug_mode = 0):
-		if self.call_lock() == False:
-			raise CallException("call reenter, flood")
+		#if self.call_lock() == False:
+		#	raise CallException("call reenter, flood")
 
 		#print("call realize")
 		res = self.call_realize(func, args, lib_path, use_addr, call_reg, debug_list, debug_mode)
 		#print("call realize over")
 
-		if self.call_unlock() == False:
-			raise CallException("error in call")
+		#if self.call_unlock() == False:
+		#	raise CallException("error in call")
 
 		return res
 
@@ -1507,6 +1573,8 @@ class PyGDB():
 		else:
 			func_addr = func
 
+		#print("func:", func, hex(func_addr))
+
 		pc = self.get_reg("pc")
 		#print("pc", hex(self.get_reg("pc")))
 		origin_sp = sp = self.get_reg("sp")
@@ -1525,11 +1593,11 @@ class PyGDB():
 		if self.bits == 64:
 			#sp -= sp%0x8
 			#align by 0x10
-			sp -= sp%0x10
+			sp -= (sp%0x10)
 		else:
 			#sp -= sp%0x4
 			#align by 0x8
-			sp -= sp%0x8
+			sp -= (sp%0x8)
 
 		self.set_reg("sp", sp)
 		args = args_new
@@ -1547,9 +1615,15 @@ class PyGDB():
 		nop_step_info = ""
 		if self.is_arm():
 			if call_reg is None:
-				call_reg = "r%d"%len(args)
+				if self.bits == 32:
+					call_reg = "r%d"%len(args)
+					nop_step_info = "mov r0, r0"
+				else:
+					call_reg = "x%d"%len(args)
+					nop_step_info = "mov x0, x0"
+
+			call_reg_val = self.get_reg(call_reg)
 			self.set_reg(call_reg, func_addr)
-			nop_step_info = "mov r0, r0"
 			asm_info = ""
 			asm_info += nop_step_info + "\n"
 			asm_info += "blx %s\n"%call_reg
@@ -1561,6 +1635,8 @@ class PyGDB():
 				else:
 					call_reg = "eax"
 
+			call_reg_val = self.get_reg(call_reg)
+			#print("set", call_reg, hex(func_addr))
 			self.set_reg(call_reg, func_addr)
 			nop_step_info = "nop"
 			asm_info = ""
@@ -1610,8 +1686,12 @@ class PyGDB():
 
 		#print [hex(c) for c in args]
 		if self.is_arm():
-			for i in range(len(args)):
-				self.set_reg("r%d"%i, args[i])
+			if self.bits == 32:
+				for i in range(len(args)):
+					self.set_reg("r%d"%i, args[i])
+			else:
+				for i in range(len(args)):
+					self.set_reg("x%d"%i, args[i])
 		else:
 			if self.bits == 64:
 				reg_names = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"]
@@ -1681,11 +1761,13 @@ class PyGDB():
 			self.set_reg("pc", use_addr-nop_step_sz)
 			self.stepi()
 			self.write_mem(use_addr-nop_step_sz, old_data[:nop_step_sz])
-			
+		
+		res = self.get_result()
+		self.set_reg(call_reg, call_reg_val)
 		self.set_reg("pc", pc)
 		self.set_reg("sp", origin_sp)
 
-		return self.get_result()
+		return res
 
 	def get_symbol_value(self, name):
 		#self.interact()
@@ -1870,7 +1952,7 @@ class PyGDB():
 
 		#self.hexdump(data = sockaddr_in)
 		#fd_tcp = socket(AF_INET, SOCK_STREAM, 0)
-		server = self.call("socket", [2, 1, 0])
+		server = self.call("socket", [2, 1, 0], debug_list = False)
 		#print "server", hex(server)
 
 		# setsockopt(listenfd, SOL_SOCKET, SO_REUSEADDR, &flag, len) 
@@ -1881,7 +1963,7 @@ class PyGDB():
 			self.restore_context()
 			return  
 		#bind(server,(struct sockaddr *)&serv_addr,0x10)
-		if (self.call("bind", [server, sockaddr_in, 0x10]) != 0):
+		if (self.call("bind", [server, sockaddr_in, 0x10], debug_list = False) != 0):
 			print("bind error")
 			self.restore_context()
 			return 
@@ -2145,14 +2227,14 @@ class PyGDB():
 		self.writefile(infile, source)
 		cmdline = "%s %s -o %s %s"%(gcc_path, option, outfile, infile)
 		res = self.run_cmd(cmdline)
+		#print("compile_cmd:", cmdline)
 		if ("error: " not in res.lower()):
 			return True
 		else:
 			print(res)
 			return False
 
-
-	def gen_payload(self, source_data, entry_name, gcc_path = "gcc", option = "", obj_name = None):
+	def gen_payload(self, source_data, gcc_path = "gcc", option = "", obj_name = None):
 		
 		if io_wrapper == "zio":
 			print("please install pwntools")
@@ -2170,6 +2252,7 @@ class PyGDB():
 		source_data = self.gen_from_pwntools(source_data)
 		source_data = self.gen_from_embed(source_data)
 		source_data = self.gen_from_asm(source_data)
+		source_data = self.gen_from_stack_value(source_data)
 
 		source = ""
 		source += source_data + "\n"
@@ -2190,7 +2273,7 @@ class PyGDB():
 		res = self.compile_cfile(source, gcc_path, option, cfile_name, obj_name)
 
 		if res == True:
-			elf_info = ELF(obj_name)
+			elf_info = ELF(obj_name, checksec = False)
 
 			entry_addr = elf_info.symbols[entry_name]
 			main_addr = elf_info.symbols["main"]
@@ -2208,6 +2291,155 @@ class PyGDB():
 				os.unlink(obj_name)
 
 		return data
+
+	def hash(self, data, func = "md5"):
+		return PyGDB_hash(data, func)
+
+	def write_plt_got(self, func_addr, plt_addr, got_addr):
+		addr_size = self.bits / 8
+		if self.bits == 64:
+			p_f = p64
+			ptr_asm = "QWORD PTR"  
+		else:
+			p_f = p32
+			ptr_asm = "DWORD PTR"
+
+		#print("got_addr:", hex(got_addr))
+		#print("plt_addr:", hex(plt_addr))
+		offset = got_addr - (plt_addr + 6)
+		if self.is_arm():
+			if offset >= 0:
+				offset_str = "+0x%x"%offset
+			else:
+				offset_str = "-0x%x"%ord(offset)
+			plt_data = self._asm_("mov pc %s [pc%s]"%(ptr_asm, offset_str), vma = plt_addr)
+		else:
+			if offset >= 0:
+				offset_str = "+0x%x"%offset
+			else:
+				offset_str = "-0x%x"%abs(offset)
+			if self.bits == 64:
+				plt_data = self._asm_("jmp %s [rip%s]"%(ptr_asm, offset_str), vma = plt_addr)
+				#print(self._disasm_(plt_data, vma = plt_addr))
+				#real_data = "\xff\x25" + p_f(got_addr - (plt_addr + 6))
+				#print(self._disasm_(real_data, vma = plt_addr))
+			else:
+				plt_data = self._asm_("jmp %s [eip%s]"%(ptr_asm, offset_str), vma = plt_addr)
+
+		got_data = p_f(func_addr)
+		self.write_mem(plt_addr, plt_data)
+		#print("write got:", hex(got_addr), hex(elf_info.symbols[key]))
+		self.write_mem(got_addr, got_data)
+
+	def load_lib_plt(self, lib_name, func_list = [], plt_base = None, got_base = None, config = True):
+
+		plt_maps = {}
+		#print("here:", lib_name)
+		if os.path.exists(lib_name):
+			#print("load_lib_plt:", lib_name)
+			elf_info = ELF(lib_name, checksec = True)
+
+			use_func_list = []
+			for key in elf_info.symbols.keys():
+				#print(key, func_list, key in func_list)
+				if key in func_list:
+					use_func_list.append(key)
+
+			sym_count = len(use_func_list)
+
+			print("sym_count:", sym_count)
+			addr_size = self.bits / 8
+			if sym_count > 0:
+				if plt_base is None:
+					plt_base = self.inject_hook_alloc(sym_count*8, align = True)
+
+				if got_base is None:
+					got_base = self.inject_hook_alloc(sym_count*addr_size, align = True)
+
+				if plt_base is None:
+					raise Exception("plt addr error")
+				if got_base is None:
+					raise Exception("got addr error")
+
+				print(lib_name, "load_lib")
+				lib_base = self.load_lib(lib_name)
+				if lib_base == 0:
+					raise Exception("load lib error")
+				print(lib_name, "base:", hex(lib_base))
+				elf_info.address = lib_base
+				idx = 0
+				for key in use_func_list:
+					got_addr = got_base + idx * addr_size
+					plt_addr = plt_base + idx * 8
+					self.write_plt_got(elf_info.symbols[key], plt_addr, got_addr)
+					plt_maps[key] = plt_addr
+					idx += 1
+		else:
+			data = "error"
+			raise Exception("error not exists:", lib_name)
+		if config == True:
+			self.config_inject_map(globals_map = plt_maps)
+		return plt_maps, lib_base
+
+	def load_cfile_lib(self, filename, plt_base = None, got_base = None, gcc_path = "gcc", option = "", obj_name = None, update = True):
+		source_data = self.readfile(filename)
+		return self.load_source_lib(source_data, plt_base = plt_base, got_base = got_base, gcc_path = gcc_path, option = option, obj_name = obj_name, update = update)
+
+	def load_source_lib(self, source_data, plt_base = None, got_base = None, gcc_path = "gcc", option = "", obj_name = None, update = True):
+
+		auto_gen = False
+		if obj_name is None:
+			self.run_cmd("mkdir -p ./.PyGDB")
+			obj_name = "./.PyGDB/%s"%self.hash(source_data)
+			auto_gen = True
+
+		func_list = []
+
+		source_data = self.gen_from_syscall(source_data)
+		source_data = self.gen_from_pwntools(source_data)
+		source_data = self.gen_from_embed(source_data)
+		source_data = self.gen_from_asm(source_data)
+		source_data = self.gen_from_stack_value(source_data)
+		source_data = self.gen_from_common(source_data)
+		func_list = self.extract_func(source_data)
+		print("func_list:", func_list)
+
+		if auto_gen == False or os.path.exists(obj_name) == False or update == True:
+		
+			context(arch = self.arch, bits = self.bits, os = 'linux')
+
+			if option == "":
+				option += " -fPIC -shared"
+
+			if self.is_arm() == False:
+				if self.bits != 64:
+					option += " -m32"
+
+			source = ""
+			source += source_data
+			
+			cfile_name = obj_name + ".c"
+			#print source
+			#self.writefile(cfile_name, source)
+			#cmdline = "%s %s -o %s %s"%(gcc_path, option, obj_name, cfile_name)
+			#res = self.run_cmd(cmdline)
+			res = self.compile_cfile(source, gcc_path, option, cfile_name, obj_name)
+
+			#"""
+			if auto_gen:
+				if os.path.exists(cfile_name):
+					os.unlink(cfile_name)
+			#"""
+
+		plt_maps, lib_base = self.load_lib_plt(obj_name, func_list = func_list, plt_base = plt_base, got_base = got_base)
+
+		#"""
+		if auto_gen:
+			if os.path.exists(obj_name):
+				os.unlink(obj_name)
+		#"""
+
+		return plt_maps, lib_base
 
 	def gen_inject_asm(self, code_asm):
 		if io_wrapper == "zio":
@@ -2567,8 +2799,8 @@ char* mov_addr_rax(void* data) {
 						args_name = self.arch_args
 						stack_arg_list = args_name[:args_count]
 						#real_args = []
-						code_asm += "push SYS_%s\n"%name
-						code_asm += "pop rax\n"
+						code_asm += "pushq SYS_%s\n"%name
+						code_asm += "popq rax\n"
 						code_asm += "syscall\n"
 						#code_asm = getattr(shellcraft, name)(*(stack_arg_list))
 				else:
@@ -2600,6 +2832,150 @@ char* mov_addr_rax(void* data) {
 		new_content += "\n".join(prefix_list + mid_list + suffix_list)
 
 		return new_content
+
+
+	def gen_from_stack_value(self, c_source, show = False):
+		context(arch = self.arch, bits = self.bits, os = 'linux')
+
+		name_map = {}
+		start_model = "gen_from_stack_value("
+
+		prefix_list = []
+		suffix_list = []
+		mid_list = []
+		for line in c_source.split("\n"):
+			line_new = line.strip()
+			if line_new.startswith(start_model):
+				pos_e = line_new.rfind(")")
+				if pos_e == -1:
+					continue
+
+				pos_b = line_new.rfind(",")
+				if pos_b == -1:
+					continue
+
+				voto_info = line_new[len(start_model):pos_e].replace("\t", " ")
+				while voto_info.find("  ") != -1:
+					voto_info = voto_info.replace("  ", " ")
+				voto_info = voto_info.strip()
+				name = voto_info.split("(")[0].split(" ")[-1].strip()
+
+				dataInfo = line_new[pos_b+1:pos_e].strip()
+				
+				if asm_code[0] in ["\'", "\""] and asm_code[-1] in ["\'", "\""]:
+					asm_code = asm_code[1:-1]
+
+				stackContent = self.gen_stack_value(name, dataInfo)
+				mid_list.append(stackContent.strip())
+
+			else:
+				mid_list.append(line)
+		new_content = ""
+		new_content += "\n".join(prefix_list + mid_list + suffix_list)
+
+		return new_content
+
+	def core_context_header(self):
+
+		regs_info_list = []
+		if self.is_arm() == True:
+			aligin_val = 0
+		else:
+			aligin_val = 1
+		for reg in self.context_regs:
+			if reg in [self.sp_reg, self.pc_reg]:
+				continue
+			regs_info_list.append("	long int %s;"%reg)
+		if self.is_arm() == False:
+			regs_info_list.append("	long int eflags;")
+			
+		if len(self.context_regs) % 2 != aligin_val:
+			regs_info_list.append("	long int reserved;")
+		regs_info_list.append("	long int %s;"%self.sp_reg)
+		regs_info_list.append("	long int %s;"%self.pc_reg)
+		header_content = """
+typedef struct _context {
+%s
+} context;"""%("\n".join(regs_info_list))
+		return header_content.strip()
+
+	def context_header(self):
+
+		regs_info_list = []
+		if self.is_arm() == True:
+			aligin_val = 0
+		else:
+			aligin_val = 1
+		for reg in self.context_regs:
+			if reg in [self.sp_reg, self.common_reg]:
+				continue
+			regs_info_list.append("	long int %s;"%reg)
+		if self.is_arm() == False:
+			regs_info_list.append("	long int eflags;")
+
+		if len(self.context_regs) % 2 != aligin_val:
+			regs_info_list.append("	long int reserved;")
+		regs_info_list.append("	long int %s;"%self.common_reg)
+		regs_info_list.append("	long int %s;"%self.sp_reg)
+		header_content = """
+typedef struct _context {
+%s
+} context;"""%("\n".join(regs_info_list))
+		return header_content.strip()
+
+	def gen_from_common(self, c_source, show = False):
+		context(arch = self.arch, bits = self.bits, os = 'linux')
+
+		name_map = {}
+		start_model = "#include "
+
+		prefix_list = []
+		suffix_list = []
+		mid_list = []
+		for line in c_source.split("\n"):
+			line_new = line.strip()
+			if line_new.startswith(start_model):
+
+				while line_new.find("  ") != -1:
+					line_new = line_new.replace("  ", " ")
+				header = line_new.replace(start_model, "").replace("\t", " ").strip()
+				
+				if header[0] in ["\'", "\"", "<"] and header[-1] in ["\'", "\"", ">"]:
+					header = header[1:-1]
+				if header == "pygdb/context.h":
+					mid_list.append(self.core_context_header())
+				else:
+					mid_list.append(line)
+			else:
+				mid_list.append(line)
+		new_content = ""
+		new_content += "\n".join(prefix_list + mid_list + suffix_list)
+
+		return new_content
+
+	def extract_func(self, c_source):
+		name_list = []
+		for line in c_source.split("\n"):
+			line_new = line.strip()
+			if "{" in line_new:
+				line_new = line_new.split("{")[0].strip()
+			#print("line_new:", line_new)
+			if line_new.endswith(")"):
+				pos_e = line_new.rfind(")")
+				if pos_e == -1:
+					continue
+				voto_info = line_new[:pos_e].replace("\t", " ")
+				while voto_info.find("  ") != -1:
+					voto_info = voto_info.replace("  ", " ")
+				voto_info = voto_info.strip()
+				#print("voto_info:", voto_info)
+				name = voto_info.split("(")[0].split(" ")[-1].strip()
+
+				if len(name) == 0:
+					continue
+				if name not in ["if", "while", "for"] and name not in name_list:
+					name_list.append(name)
+		return name_list
 
 	def load_source(self, arch = "amd64", source = "", text_addr = None, gcc_path = "gcc", obj_name = None):
 		option = ""
@@ -2638,6 +3014,7 @@ int main() {
 		if data:
 			libaddr = data.group().split("-")[0]
 			self.priv_globals['lib_base'][libname] = int(libaddr, 16)
+			self.priv_globals['lib_handle'][libname] = 0
 
 			lib_path = data.group().split(" ")[-1]
 			#print("lib_path:", lib_path)
@@ -2656,18 +3033,33 @@ int main() {
 				self.priv_globals["__libc_dlopen_mode"] = self.get_symbol_value("__libc_dlopen_mode")
 				self.priv_globals["__libc_dlsym"] = self.get_symbol_value("__libc_dlsym")
 			
-			libdl = "libdl.so.2"
-			args = [libdl + "\x00", 0x80000001]
-			libdl_handle = self.call(self.priv_globals["__libc_dlopen_mode"], args)
-			self.priv_globals["dlopen"] = self.get_symbol_value("dlopen")
-			self.priv_globals["dlsym"] = self.get_symbol_value("dlsym")
-			#self.priv_globals["lib_base"] = {}
+			libdl_base = self.get_lib_base("libdl")
+			#print("libdl base:", hex(libdl_base))
+			if libdl_base == 0:
+				libdl = "libdl.so.2"
+				args = [libdl + "\x00", 0x80000001]
+				libdl_handle = self.call(self.priv_globals["__libc_dlopen_mode"], args)#, debug_list = True)
+				self.priv_globals["dlopen"] = self.get_symbol_value("dlopen")
+				self.priv_globals["dlsym"] = self.get_symbol_value("dlsym")
+				#self.priv_globals["lib_base"] = {}
+			else:
+				self.priv_globals["dlopen"] = self.get_lib_func("dlopen", "libdl")
+				self.priv_globals["dlsym"] = self.get_lib_func("dlsym", "libdl")
 
-		args = [lib_path + "\x00", 1] #LAZY
-		self.priv_globals["lib_base"][lib_path] = self.call(self.priv_globals["dlopen"], args)#, debug_list = [self.priv_globals["dlopen"]])
+				#print("dlopen", hex(self.priv_globals["dlopen"]))
+				#print("dlsym", hex(self.priv_globals["dlsym"]))
+				#self.gdb_interact(gdbscript_pre = "file /bin/cat")
+
+		lib_full_path = os.path.realpath(lib_path)
+		#print("lib_full_path:", lib_full_path)
+		args = [lib_full_path + "\x00", 1] #LAZY
+		handle = self.call(self.priv_globals["dlopen"], args)#, debug_list = True)
+		#print("handle:", lib_full_path, hex(handle))
+		self.priv_globals["lib_handle"][lib_path] = handle
+		self.priv_globals["lib_base"][lib_path] = self.read_pointer(handle)
 		self.priv_globals['lib_path'][lib_path] = lib_path
 		#print(self.priv_globals["lib_base"])
-		#print "lib_base:", hex(self.priv_globals["lib_base"])
+		#print "lib_base:", hex(self.priv_globals["lib_base"][lib_path])
 		self.restore_context()
 		return self.priv_globals["lib_base"][lib_path]
 
@@ -2681,7 +3073,7 @@ int main() {
 			if io_wrapper == "zio":
 				print("please install pwntools")
 			lib_path = self.priv_globals['lib_path'][libname]
-			self.priv_globals["lib_elf"][libname] = ELF(lib_path)
+			self.priv_globals["lib_elf"][libname] = ELF(lib_path, checksec = False)
 
 		elf_info = self.priv_globals["lib_elf"][libname]
 		return elf_info.symbols[name] + self.priv_globals["lib_base"][libname]
@@ -2693,7 +3085,7 @@ int main() {
 			if libname not in self.priv_globals['lib_path'].keys():
 				self.load_lib(libname)
 		self.save_context()
-		args = [self.priv_globals["lib_base"][lib_path], name + "\x00"]
+		args = [self.priv_globals["lib_handle"][lib_path], name + "\x00"]
 		real_addr = self.call(self.priv_globals["dlsym"], args)
 		if real_addr == 0:
 			print("[!]", name, ":", hex(real_addr))
@@ -2764,18 +3156,22 @@ int main() {
 			ret_values.append([addr, info.strip()])
 		return ret_values 
 
-	def get_disasm(self, addr, length = 1, parse = True, mode = "line"):
+	def get_disasm(self, addr, length = 1, parse = True, mode = "line", base = None):
 		if length > 0x400 and length > addr:
 			mode = "code"
 			length = length - addr
 
-		if mode == "line":
+		if mode == "line" and base is None:
 			cmdline = "x/%di 0x%x"%(length, addr)
 			info = self.do_gdb_ret(cmdline)#.strip()
 			mode = 1
 		else:
+			if base is None or base is True:
+				base = addr
+			elif base == False:
+				base = 0
 			data = self.read_mem(addr, length)
-			info = self._disasm_(data, addr)
+			info = self._disasm_(data, base)
 			mode = 2
 		#print("cmdline:", cmdline)
 		#print("info:")
@@ -3075,6 +3471,7 @@ int main() {
 		init_script += "context\n"
 		init_script += "\n".join(["b *0x%x"%c for c in break_list]) + "\n"
 		init_script += gdbscript_suf.strip()
+		init_file = os.path.realpath(init_file)
 		self.writefile(init_file, init_script)
 
 		self.detach()
@@ -3087,16 +3484,28 @@ int main() {
 		self.wait_interact()
 		return
 
-	def setvbuf0(self):
+	def setvbuf0(self, stdin = None, stdout = None, stderr = None):
 		self.save_context()
-		stdin = self.get_symbol_value("stdin")
-		stdout = self.get_symbol_value("stdout")
-		stderr = self.get_symbol_value("stderr")
+
+		if stdin is None:
+			stdin = self.get_symbol_value("stdin")
+			if stdin != 0:
+				stdin = self.get_lib_symbol("stdin")
+				stdin = self.read_pointer(stdin)
+		if stdout is None:
+			stdout = self.get_symbol_value("stdout")
+			if stdout != 0:
+				stdout = self.get_lib_symbol("stdout")
+				stdout = self.read_pointer(stdout)
+		if stderr is None:
+			stderr = self.get_symbol_value("stderr")
+			if stderr != 0:
+				stderr = self.get_lib_symbol("stderr")
+				stderr = self.read_pointer(stderr)
 
 		#setvbuf = pygdb.get_symbol_value("setvbuf")
 		#pygdb.set_bp(setvbuf)
-		#print "stdin:", hex(stdin)
-		self.call("setvbuf", [stdin, 0, 2, 0])
+		self.call("setvbuf", [stdin, 0, 2, 0])#, debug_list = True)
 		self.call("setvbuf", [stdout, 0, 2, 0])
 		self.call("setvbuf", [stderr, 0, 2, 0])
 		self.restore_context()
@@ -3355,7 +3764,504 @@ int main() {
 			print("inject hook error")
 			return
 
-	def inject_hook(self, addr, asm_code, show = False):
+	def core_inject_init(self, show = False):
+		if self.inject_hook_base == 0:
+			self.auto_config_inject()
+
+		if "pygdb_dispatch_addr" in self.core_pygdb_maps.keys():
+			return 
+
+		pygdb_so_file = os.path.join(self.pygdb_libpath, "pygdb.so")
+		func_list =  ["core_hook_dispatcher", "hexdump", "setvbuf0"]
+		plt_maps, lib_base = self.load_lib_plt(pygdb_so_file, func_list = func_list, config = False)
+		
+		for key in ["hexdump", "setvbuf0"]:
+			self.inject_hook_globals[key] = plt_maps[key]
+			plt_maps.pop(key)
+
+		self.core_pygdb_maps = plt_maps
+
+		func_list = ["pygdb_handler_array", "pygdb_handler_size", "pygdb_handler_pos"]
+		pygdb_so_lib = ELF(pygdb_so_file)
+		pygdb_so_lib.address = lib_base
+
+
+		for key in func_list:
+			self.core_pygdb_maps[key] = pygdb_so_lib.symbols[key]
+
+		#print("plt_maps:")
+		#for key in plt_maps.keys():
+		#	print(key, hex(plt_maps[key]))
+
+		base_addr = 0x8000000
+
+		addr = call_dispatcher_addr = self.inject_hook_addr
+		ctx  = True
+
+		new_code_addr = self.inject_hook_addr - call_dispatcher_addr + base_addr
+		if ctx == True:
+			new_code_addr += len(self._asm_(self.core_push_context_asm(call_dispatcher_addr)))
+		
+		self.write_int(self.core_pygdb_maps["pygdb_handler_pos"], 0x0)
+
+
+		call_dispatcher_asm_list = []
+		"""
+		call_dispatcher_asm_list.append("%s %s, 0x%x"%(self.mov_asm, self.common_reg, self.core_pygdb_maps["core_hook_dispatcher"]))
+		call_dispatcher_asm_list.append("call %s"%self.common_reg)
+		"""
+		# begins
+		call_dispatcher_asm_list = []
+		if True:
+			args_new = [self.sp_reg] + []
+			if self.is_arm():
+				for i in range(len(args_new)):
+					call_dispatcher_asm_list.append("mov %s, %s"%(self.arch_args[i], args_new[i]))
+			else:
+				if self.bits == 32:
+					for i in range(len(args_new)-1, -1, -1):
+						call_dispatcher_asm_list.append("%s %s"%(self.push_asm, args_new[i]))
+				else:
+					for i in range(len(args_new)):
+						call_dispatcher_asm_list.append("mov %s, %s"%(self.arch_args[i], args_new[i]))
+
+		func_addr = self.core_pygdb_maps["core_hook_dispatcher"]
+		if self.is_arm():
+			call_dispatcher_asm_list.append("%s r1, 0x%x"%(self.mov_asm, func_addr))
+			call_dispatcher_asm_list.append("blx r1")
+		else:
+			call_dispatcher_asm_list.append("%s %s, 0x%x"%(self.mov_asm, self.common_reg, func_addr))
+			call_dispatcher_asm_list.append("call %s"%self.common_reg)
+
+		if self.is_arm() == False and self.bits == 32:
+			for i in range(len(args_new)-1, -1, -1):
+				call_dispatcher_asm_list.append("%s %s"%(self.pop_asm, self,common_reg))
+		# ends
+
+		call_dispatcher_asm  = "\n".join(call_dispatcher_asm_list)
+		call_dispatcher_code = self._asm_(call_dispatcher_asm, new_code_addr)
+
+		origin_code_list = []
+
+		if True:
+
+			if ctx == True:
+				new_asm_code_list = [self.core_push_context_asm(addr)] + call_dispatcher_asm_list + [self.core_pop_context_asm()]
+			else:
+				new_asm_code_list = call_dispatcher_asm_list
+
+			new_asm_code = "\n".join(new_asm_code_list)
+			if show:
+				print("total code:")
+				print("-"*0x10)
+				print(new_asm_code)
+				print("-"*0x10)
+
+			#print("new_asm_code:")
+			#print(new_asm_code)
+			patch_code = self._asm_(new_asm_code, self.inject_hook_addr - addr + base_addr)
+			#print("new_asm_code ok:")
+
+			patch_addr = self.inject_hook_alloc(patch_code)
+			if patch_addr != 0:				
+				if show:
+					print("total dispatcher_code:", hex(addr))
+					print("-"*0x10)
+					print(self.get_code(patch_addr, 0x10, below = True))
+					print("-"*0x10)
+			self.core_pygdb_maps["pygdb_dispatch_addr"] = patch_addr
+		else:
+			print("inject hook error")
+			return 0
+
+		return patch_addr
+
+
+	def core_push_context_asm(self, pc = None):
+
+		asm_code_list = []
+		#pc in stack when use call
+		asm_code_list.append("%s %s"%(self.push_asm, self.sp_reg))
+		#align
+		if self.is_arm() == True:
+			aligin_val = 0
+		else:
+			aligin_val = 1
+		if len(self.context_regs) % 2 != aligin_val:
+			asm_code_list.append("%s %s"%(self.push_asm, self.common_reg))
+		if self.is_arm() == False:
+			asm_code_list.append("pushf")
+		for idx in range(len(self.context_regs) - 1, -1, -1):
+			reg = self.context_regs[idx]
+			if reg in [self.pc_reg, self.sp_reg]:
+				continue
+			asm_code_list.append("%s %s"%(self.push_asm, reg))
+		#asm_code_list.append("pushf")
+		return "\n".join(asm_code_list)
+
+	def core_pop_context_asm(self):
+
+		asm_code_list = []
+		#asm_code_list.append("popfs")
+		for idx in range(len(self.context_regs)):
+			reg = self.context_regs[idx]
+			if reg in [self.sp_reg, self.pc_reg]:
+				continue
+			asm_code_list.append("%s %s"%(self.pop_asm, reg))
+		if self.is_arm() == False:
+			asm_code_list.append("popf")
+		#align
+		if self.is_arm() == True:
+			aligin_val = 0
+		else:
+			aligin_val = 1
+		if len(self.context_regs) % 2 != aligin_val:
+			asm_code_list.append("%s %s"%(self.pop_asm, self.common_reg))
+		asm_code_list.append("%s %s"%(self.pop_asm, self.sp_reg))
+		asm_code_list.append("ret")
+		return "\n".join(asm_code_list)
+
+	def core_set_handler_item(self, idx, hook_addr, handler, ret_addr):
+		pygdb_handler_pos   = self.core_pygdb_maps["pygdb_handler_pos"]
+		pygdb_handler_size  = self.core_pygdb_maps["pygdb_handler_size"]
+		pygdb_handler_array = self.core_pygdb_maps["pygdb_handler_array"]
+
+		addr_size = self.bits / 8
+		print("write 0x%x: 0x%x, 0x%x, 0x%x"%(pygdb_handler_array + (idx*3 + 0)*addr_size, hook_addr, handler, ret_addr))
+		self.write_pointer(pygdb_handler_array + (idx*3 + 0)*addr_size, hook_addr)
+		self.write_pointer(pygdb_handler_array + (idx*3 + 1)*addr_size, handler)
+		self.write_pointer(pygdb_handler_array + (idx*3 + 2)*addr_size, ret_addr)
+
+
+	def core_inject_hook_func(self, addr, func, libname = "libc", show = False):
+		if len(self.core_pygdb_maps.keys()) == 0:
+			self.core_inject_init(show = show)
+		self.auto_config_inject(addr)
+
+		if addr in self.inject_hook_map.keys():
+			self.remove_inject_hook(addr)
+
+		if type(func) == str:
+			if func in self.inject_hook_globals.keys():
+				func_addr = self.inject_hook_globals[func]
+			else:
+				func_addr = self.get_symbol_value(func)
+				if func_addr == 0:
+					func_addr = self.get_lib_func(func, libname = libname)
+		else:
+			func_addr = func
+
+		plt_key = "dispatcher_plt_%x"%(self.inject_hook_base)
+		if plt_key not in self.core_pygdb_maps.keys():
+			sym_count = 1
+			addr_size = self.bits / 8
+			plt_base = self.inject_hook_alloc(sym_count*8, align = True)
+			got_base = self.inject_hook_alloc(sym_count*addr_size, align = True)
+			self.write_plt_got(self.core_pygdb_maps["pygdb_dispatch_addr"], plt_base, got_base)
+			pygdb_dispatch_plt = plt_base
+		else:
+			pygdb_dispatch_plt = self.core_pygdb_maps[plt_key]
+
+
+		if plt_base == 0 or got_base == 0:
+			print("plt got alloc error")
+			return 
+
+		print("func:", func)
+		print("func_addr:", hex(func_addr))
+
+		pygdb_handler_pos   = self.core_pygdb_maps["pygdb_handler_pos"]
+		pygdb_handler_size  = self.core_pygdb_maps["pygdb_handler_size"]
+		pygdb_handler_array = self.core_pygdb_maps["pygdb_handler_array"]
+
+		cur_pos = self.read_int(pygdb_handler_pos)
+		size = self.read_int(pygdb_handler_size)
+
+		if cur_pos >= size:
+			print("hook array is full")
+			return 
+
+		base_addr = 0x8000000
+
+		jmp_target_asm 	= "call 0x%x"%(self.inject_hook_addr - addr + base_addr)
+		jmp_target_code = self._asm_(jmp_target_asm, addr - addr + base_addr)
+
+		code_header_asm = "jmp 0x%x"%(pygdb_dispatch_plt - addr + base_addr)
+			
+		asmInfos = self.get_disasm(addr, 0x40, parse = False, base = base_addr)
+		end_addr = 0
+		origin_code_list = []
+		for idx in range(len(asmInfos)):
+			asmInfo = asmInfos[idx]
+			[asm_addr, asm_code] = asmInfo
+			asm_code = self.remove_pairs(asm_code, ["<", ">"])
+			#print(hex(asm_addr), ":", asm_code)
+			if asm_addr - base_addr >= len(jmp_target_code):
+				end_addr = asm_addr
+				break
+			origin_code_list.append(asm_code)
+
+		if end_addr != 0:
+			origin_data = self.read_mem(addr, len(jmp_target_code))
+
+			jmp_back_asm = "jmp 0x%x"%(end_addr)
+			new_asm_code_list = [code_header_asm] + origin_code_list + [jmp_back_asm]
+			new_asm_code = "\n".join(new_asm_code_list)
+			if show:
+				print("inject code:")
+				print("-"*0x10)
+				print(new_asm_code)
+				print("-"*0x10)
+
+			#print("new_asm_code:")
+			#print(new_asm_code)
+			patch_code = self._asm_(new_asm_code, self.inject_hook_addr - addr + base_addr)
+			patch_code_header = self._asm_(code_header_asm, self.inject_hook_addr - addr + base_addr)
+			#print("new_asm_code ok:")
+
+			patch_addr = self.inject_hook_alloc(patch_code)
+			if patch_addr != 0:
+
+				if show:
+					print("origin:", hex(addr))
+					print("-"*0x10)
+					print(self.get_code(addr, 0x5, below = True))
+					print("-"*0x10)
+				self.write_mem(addr, jmp_target_code)
+				hook_item = [patch_addr, patch_code, addr, origin_data, cur_pos]
+				
+				if show:
+					print("after:", hex(addr))
+					print("-"*0x10)
+					print(self.get_code(addr, 0x5, below = True))
+					print("-"*0x10)
+
+					print("patch_addr:", hex(patch_addr))
+					print("-"*0x10)
+					print(self.get_code(patch_addr, 0x10, below = True))
+					print("-"*0x10)
+
+				self.core_set_handler_item(cur_pos, addr, func_addr, patch_addr + len(patch_code_header))
+				self.write_int(pygdb_handler_pos, cur_pos + 1)
+
+				self.inject_hook_map[addr] = hook_item
+				self.inject_patch_map[addr] = [jmp_target_code, origin_data]
+		else:
+			print("inject hook error")
+			return 0
+
+		return patch_addr
+
+	def push_context_asm(self, pc = None):
+
+		asm_code_list = []
+
+		asm_code_list.append("%s %s"%(self.push_asm, self.sp_reg))
+		asm_code_list.append("%s %s"%(self.push_asm, self.common_reg))
+		#align
+		if self.is_arm() == True:
+			aligin_val = 0
+		else:
+			aligin_val = 1
+		if len(self.context_regs) % 2 != aligin_val:
+			asm_code_list.append("%s %s"%(self.push_asm, self.common_reg))
+		if self.is_arm() == False:
+			asm_code_list.append("pushf")
+		for idx in range(len(self.context_regs) - 1, -1, -1):
+			reg = self.context_regs[idx]
+			if reg == self.pc_reg:
+				if pc is not None:
+					asm_code_list.append("%s %s, 0x%x"%(self.mov_asm, self.common_reg, pc))
+					asm_code_list.append("%s %s"%(self.push_asm, self.common_reg))
+					continue
+			elif reg in [self.sp_reg, self.common_reg]:
+				continue
+			asm_code_list.append("%s %s"%(self.push_asm, reg))
+		#asm_code_list.append("pushf")
+		return "\n".join(asm_code_list)
+
+	def pop_context_asm(self):
+
+		asm_code_list = []
+		#asm_code_list.append("popfs")
+		for idx in range(len(self.context_regs)):
+			reg = self.context_regs[idx]
+			if reg == self.pc_reg:
+				asm_code_list.append("add %s, 0x%d"%(self.sp_reg, self.bits/8))
+				continue
+			elif reg in [self.sp_reg, self.common_reg]:
+				continue
+			asm_code_list.append("%s %s"%(self.pop_asm, reg))
+		if self.is_arm() == False:
+			asm_code_list.append("popf")
+		asm_code_list.append("%s %s"%(self.pop_asm, self.common_reg))
+		#align
+		if self.is_arm() == True:
+			aligin_val = 0
+		else:
+			aligin_val = 1
+		if len(self.context_regs) % 2 != aligin_val:
+			asm_code_list.append("%s %s"%(self.pop_asm, self.common_reg))
+		asm_code_list.append("%s %s"%(self.pop_asm, self.sp_reg))
+		return "\n".join(asm_code_list)
+
+	def inject_hook_func(self, addr, func, libname = "libc", args = [], ctx = True, show = False):
+		self.auto_config_inject(addr)
+
+		if addr in self.inject_hook_map.keys():
+			self.remove_inject_hook(addr)
+
+		args_new = []
+		for key in args:
+			if type(key) is str:
+				addr = self.inject_hook_alloc(key)
+			else:
+				addr = key
+			args_new.append("0x%x"%(addr))
+
+		code_asm_list = []
+		if True:
+			args_new = [self.sp_reg] + args_new
+			if self.is_arm():
+				for i in range(len(args_new)):
+					code_asm_list.append("mov %s, %s"%(self.arch_args[i], args_new[i]))
+			else:
+				if self.bits == 32:
+					for i in range(len(args_new)-1, -1, -1):
+						code_asm_list.append("%s %s"%(self.push_asm, args_new[i]))
+				else:
+					for i in range(len(args_new)):
+						code_asm_list.append("mov %s, %s"%(self.arch_args[i], args_new[i]))
+
+		if type(func) == str:
+			if func in self.inject_hook_globals.keys():
+				func_addr = self.inject_hook_globals[func]
+			else:
+				func_addr = self.get_lib_func(func, libname = libname)
+		else:
+			func_addr = func
+
+		print("func:", func)
+		print("func_addr:", hex(func_addr))
+
+		if self.is_arm():
+			code_asm_list.append("%s r1, 0x%x"%(self.mov_asm, func_addr))
+			code_asm_list.append("blx r1")
+		else:
+			code_asm_list.append("%s %s, 0x%x"%(self.mov_asm, self.common_reg, func_addr))
+			code_asm_list.append("call %s"%self.common_reg)
+
+		if self.is_arm() == False and self.bits == 32:
+			for i in range(len(args_new)-1, -1, -1):
+				code_asm_list.append("%s %s"%(self.pop_asm, self,common_reg))
+
+		code_asm_bin = self._asm_("\n".join(code_asm_list))
+		#return self.inject_hook_asm(addr, "\n".join(code_asm_list), ctx = ctx, show = show)	
+		return self.inject_hook_code(addr, code_asm_bin, ctx = ctx, show = show)	
+
+	def inject_hook(self, addr, asm_code_func, hook_type = "asm", ctx = True, show = False):
+		if hook_type == "asm":
+			return self.inject_hook_asm(addr, asm_code_func, ctx = ctx, show = show)
+		else:
+			return self.core_inject_hook_func(addr, asm_code_func, ctx = ctx, show = show)
+
+	def inject_hook_code(self, addr, code, ctx = True, show = False):
+		self.auto_config_inject(addr)
+
+		"""
+		self.inject_hook_map = {}
+		self.inject_hook_addr = 0x0
+		self.inject_hook_base = 0x0
+		self.inject_hook_size = 0x0
+		self.inject_patch_map = {}
+		self.inject_free_map  = {}
+		self.inject_hook_globals = {}
+		"""
+		base_addr = 0x8000000
+		if addr in self.inject_hook_map.keys():
+			self.remove_inject_hook(addr)
+		new_code_addr = self.inject_hook_addr - addr + base_addr
+		if ctx == True:
+			new_code_addr += len(self._asm_(self.push_context_asm(addr)))
+		asm_code = self._disasm_(code, vma = new_code_addr)
+		asmInfos = self.parse_disasm(asm_code, mode = 2)
+
+		new_asm_code_list = []
+		for asmInfo in asmInfos:
+			new_asm_code_list.append(asmInfo[1])
+
+		jmp_target_asm 	= "jmp 0x%x"%(self.inject_hook_addr - addr + base_addr)
+		jmp_target_code = self._asm_(jmp_target_asm, addr - addr + base_addr)
+
+		asmInfos = self.get_disasm(addr, 0x40, parse = False, base = base_addr)
+		end_addr = 0
+		origin_code_list = []
+		for idx in range(len(asmInfos)):
+			asmInfo = asmInfos[idx]
+			[asm_addr, asm_code] = asmInfo
+			asm_code = self.remove_pairs(asm_code, ["<", ">"])
+			#print(hex(asm_addr), ":", asm_code)
+			if asm_addr - base_addr >= len(jmp_target_code):
+				end_addr = asm_addr
+				break
+			origin_code_list.append(asm_code)
+
+		if end_addr != 0:
+			origin_data = self.read_mem(addr, len(jmp_target_code))
+
+			jmp_back_asm = "jmp 0x%x"%(end_addr)
+
+			if ctx == True:
+				new_asm_code_list = [self.push_context_asm(addr)] + new_asm_code_list + [self.pop_context_asm()]
+			new_asm_code_list = new_asm_code_list + origin_code_list + [jmp_back_asm]
+			new_asm_code = "\n".join(new_asm_code_list)
+			if show:
+				print("inject code:")
+				print("-"*0x10)
+				print(new_asm_code)
+				print("-"*0x10)
+
+			#print("new_asm_code:")
+			#print(new_asm_code)
+			patch_code = self._asm_(new_asm_code, self.inject_hook_addr - addr + base_addr)
+			#print("new_asm_code ok:")
+
+			patch_addr = self.inject_hook_alloc(patch_code)
+			if patch_addr != 0:
+
+				if show:
+					print("origin:", hex(addr))
+					print("-"*0x10)
+					print(self.get_code(addr, 0x5, below = True))
+					print("-"*0x10)
+				self.write_mem(addr, jmp_target_code)
+				hook_item = [patch_addr, patch_code, addr, origin_data, -1]
+				
+				if show:
+					print("after:", hex(addr))
+					print("-"*0x10)
+					print(self.get_code(addr, 0x5, below = True))
+					print("-"*0x10)
+					end_addr = end_addr + addr - base_addr
+					print("jmp_back_addr:", hex(end_addr))
+					print("-"*0x10)
+					print(self.get_code(end_addr, 0x5, below = True))
+					print("-"*0x10)
+
+					print("patch_addr:", hex(patch_addr))
+					print("-"*0x10)
+					print(self.get_code(patch_addr, 0x10, below = True))
+					print("-"*0x10)
+				self.inject_hook_map[addr] = hook_item
+				self.inject_patch_map[addr] = [jmp_target_code, origin_data]
+		else:
+			print("inject hook error")
+			return 0
+
+		return patch_addr
+
+	def inject_hook_asm(self, addr, asm_code, ctx = True, show = False):
+		self.auto_config_inject(addr)
 		"""
 		self.inject_hook_map = {}
 		self.inject_hook_addr = 0x0
@@ -3388,82 +4294,39 @@ int main() {
 						name_addr = self.get_symbol_value(name)
 					line = "call 0x%x"%name_addr
 					new_asm_code_list[-1] = line
+			elif line_strip.startswith("mov "):
+				name = line_strip.split(",")[-1].strip()
+				if name.startswith("0x") or name.isdigit():
+					continue
+				else:
+					if name in self.inject_hook_globals.keys():
+						name_addr = self.inject_hook_globals[name]
+						line = line.replace(name, "0x%x"%name_addr)
+						new_asm_code_list[-1] = line
 		#new_asm_code = "\n".join(new_asm_code_list)
 
-		jmp_target_asm 	= "jmp 0x%x"%(self.inject_hook_addr)
-		jmp_target_code = self._asm_(jmp_target_asm, addr)
+		target_offset = 0
+		if ctx == True:
+			code_pre = self._asm_(self.push_context_asm(addr))
+			target_offset = len(code_pre)
 
-		asmInfos = self.get_disasm(addr, 8, parse = False)
-		end_addr = 0
-		origin_code_list = []
-		for idx in range(len(asmInfos)):
-			asmInfo = asmInfos[idx]
-			[asm_addr, asm_code] = asmInfo
-			asm_code = self.remove_pairs(asm_code, ["<", ">"])
-			#print(hex(asm_addr), ":", asm_code)
-			if asm_addr - addr >= len(jmp_target_code):
-				end_addr = asm_addr
-				break
-			origin_code_list.append(asm_code)
+		inject_code = self._asm_("\n".join(new_asm_code_list), self.inject_hook_addr + target_offset)
 
-		if end_addr != 0:
-			origin_data = self.read_mem(addr, len(jmp_target_code))
-
-			jmp_back_asm = "jmp 0x%x"%end_addr
-
-			new_asm_code_list += origin_code_list + [jmp_back_asm]
-			new_asm_code = "\n".join(new_asm_code_list)
-			if show:
-				print("inject code:")
-				print("-"*0x10)
-				print(new_asm_code)
-				print("-"*0x10)
-
-			#print("new_asm_code:")
-			#print(new_asm_code)
-			patch_code = self._asm_(new_asm_code, self.inject_hook_addr)
-			#print("new_asm_code ok:")
-
-			patch_addr = self.inject_hook_alloc(patch_code)
-			if patch_addr != 0:
-
-				if show:
-					print("origin:", hex(addr))
-					print("-"*0x10)
-					print(self.get_code(addr, 0x5, below = True))
-					print("-"*0x10)
-				self.write_mem(addr, jmp_target_code)
-				hook_item = [patch_addr, patch_code, addr, origin_data]
-				
-				if show:
-					print("after:", hex(addr))
-					print("-"*0x10)
-					print(self.get_code(addr, 0x5, below = True))
-					print("-"*0x10)
-					print("jmp_back_addr:", hex(end_addr))
-					print("-"*0x10)
-					print(self.get_code(end_addr, 0x5, below = True))
-					print("-"*0x10)
-
-					print("patch_addr:", hex(patch_addr))
-					print("-"*0x10)
-					print(self.get_code(patch_addr, 0x10, below = True))
-					print("-"*0x10)
-				self.inject_hook_map[addr] = hook_item
-				self.inject_patch_map[addr] = [jmp_target_code, origin_data]
-		else:
-			print("inject hook error")
-			return
+		return self.inject_hook_code(addr, inject_code, ctx = ctx, show = show)
 
 	def remove_inject_hook(self, addr):
 		if addr in self.inject_hook_map.keys():
 			hook_item = self.inject_hook_map[addr]
-			[patch_addr, patch_code, origin_addr, origin_data] = hook_item
+			[patch_addr, patch_code, origin_addr, origin_data, cur_pos] = hook_item
 			self.inject_hook_free(patch_addr, len(patch_code))
 			self.inject_hook_map.pop(addr)
 			#self.inject_patch_map.pop(addr)
 			#self.write_mem(addr, origin_data)
 			self.remvoe_inject_patch(addr)
+
+			if cur_pos != -1:
+				self.core_set_handler_item(cur_pos, 0, 0, 0)
+
 
 	def clear_inject_hook(self):
 		for key in self.inject_hook_map.keys():
@@ -3475,13 +4338,28 @@ int main() {
 			self.inject_hook_free(key)
 			self.remvoe_inject_patch(key)
 
-	def inject_hook_alloc(self, data_size):
+	def inject_hook_alloc(self, data_size, align = None):
 		if type(data_size) in [str, bytes]:
 			data = data_size
 			size = len(data)
 		else:
 			size = data_size
 			data = ''
+
+		#print("align0:", align)
+		if align == True:
+			align = (self.bits / 8) * 2
+		#print("align1:", align)
+
+		align_addr = 0
+		if align is not None and (self.inject_hook_addr % align) != 0:
+			empty_size = align - (self.inject_hook_addr % align)
+			align_addr = align_addr = self.inject_hook_alloc(empty_size)
+			#print("empty_size:", hex(empty_size))
+			#print("align_addr:", hex(align_addr))
+			if align_addr == 0:
+				return 0
+
 		if self.inject_hook_size >= size:
 			addr = self.inject_hook_addr
 			origin_data = self.read_mem(self.inject_hook_addr, size)
@@ -3490,10 +4368,13 @@ int main() {
 			self.inject_hook_addr += size
 			self.inject_hook_size -= size
 			self.inject_patch_map[addr] = [data, origin_data]
-			return addr
 		else:
 			print("inject area is not enough")
-			return 0
+			addr = 0
+
+		if align_addr != 0:
+			self.inject_hook_free(align_addr)			
+		return addr
 
 	def inject_consolidate(self):
 		last_count = len(self.inject_free_map.keys())
@@ -3541,24 +4422,65 @@ int main() {
 				#print("pop here2")
 				self.inject_free_map.pop(addr)
 
-	def config_inject_map(self, addr = None, size = None, globals_map = None):
-		if addr is not None:
-			self.inject_hook_base = addr
-			self.inject_hook_addr = addr
-		if size is not None:
-			self.inject_hook_size = size
+	def switch_inject_context(self, base):
+		if self.inject_hook_base == base:
+			return 
+		if base in self.inject_hook_context.keys():
+			if self.inject_hook_base != 0x0:
+				hook_item = self.inject_hook_context[self.inject_hook_base]
+				hook_item[0] = self.inject_hook_addr
+				hook_item[1] = self.inject_hook_size
+				hook_item[2] = self.inject_free_map
+				hook_item[3] = self.inject_patch_map
+				hook_item[4] = self.inject_hook_map
+
+			print("switch_inject_context", "from", hex(self.inject_hook_base), "to", hex(base))
+			
+			self.inject_hook_base = base
+			hook_item = self.inject_hook_context[self.inject_hook_base]
+			self.inject_hook_addr = hook_item[0]
+			self.inject_hook_size = hook_item[1]
+			self.inject_free_map  = hook_item[2]
+			self.inject_patch_map = hook_item[3]
+			self.inject_hook_map  = hook_item[4]
+
+	def config_inject_map(self, base = None, size = 0x2000, globals_map = None):
+		if base is not None:
+			if base not in self.inject_hook_context.keys():
+				self.inject_hook_context[base] = [base, size, {}, {}, {}]
+			self.switch_inject_context(base)
 		if globals_map is not None:
 			for key in globals_map.keys():
 				self.inject_hook_globals[key] = globals_map[key]
 
-	def auto_config_inject(self, size = 0x2000, flag = "rwx"):
-		cur_addr = self.codebase() + 0x600000
-		size = 0x2000
-		while cur_addr < self.codebase() + 0x4000000:
+	def auto_config_inject(self, addr = None, size = 0x2000, flag = "rwx"):
+		if self.inject_hook_auto == False:
+			return
+
+		if addr is None:
+			addr = self.codebase()
+
+		addr = addr & 0xfffffffffffff000
+
+		if len(self.inject_hook_context.keys()) > 0:
+			if abs(self.inject_hook_base - addr) < 0x4000000:
+				return self.inject_hook_base
+			if addr in self.inject_hook_context.keys():
+				self.switch_inject_context(addr)
+				return addr
+			else:
+				for key in self.inject_hook_context.keys():
+					if abs(key - addr) < 0x4000000:
+						self.switch_inject_context(key)
+						return key
+
+		cur_addr = addr + 0x600000
+		try_times = 100
+		for i in range(try_times):
 			res = self.mmap(cur_addr, size, flag)
 			if res != 0:
-				return res
-			cur_addr += 0x2000
+				break
+			cur_addr += 0x10000
 		if res != 0:
 			self.config_inject_map(res, size)
 		return res
@@ -3579,8 +4501,8 @@ int main() {
 		print("inject_hook_map:")
 		for key in self.inject_hook_map.keys():
 			hook_item = self.inject_hook_map[key]
-			[patch_addr, patch_code, origin_addr, origin_data] = hook_item
-			print(hex(key), ":", hex(patch_addr), hex(len(patch_code)), hex(origin_addr), hex(len(origin_data)))
+			[patch_addr, patch_code, origin_addr, origin_data, idx] = hook_item
+			print(hex(key), ":", hex(patch_addr), hex(len(patch_code)), hex(origin_addr), hex(len(origin_data)), idx)
 
 		print("inject_patch_map:")
 		for key in self.inject_patch_map.keys():	
