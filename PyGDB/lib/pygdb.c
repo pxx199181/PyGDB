@@ -1,34 +1,11 @@
 #include <stdio.h>
+#include "pygdb.h"
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <unistd.h>  
+#include <arpa/inet.h>  
 
-#define ARCH_MODE_X64
-//#define ARCH_MODE_X32
-//#define ARCH_MODE_ARM
-//#define ARCH_MODE_AARCH64
-
-#ifdef ARCH_MODE_X64
-typedef struct _context {
-	long int rax;
-	long int rbx;
-	long int rcx;
-	long int rdx;
-	long int rsi;
-	long int rdi;
-	long int rbp;
-	long int r8;
-	long int r9;
-	long int r11;
-	long int r12;
-	long int r13;
-	long int r14;
-	long int r15;
-	long int eflags;
-	long int reserved;
-	long int rsp;
-	long int rip;
-} context;
-#endif
-
-void hexdump(unsigned char *data, int size, char *banner)
+void core_hexdump(unsigned char *data, int size, char *banner)
 {
 	if (banner != NULL) {
 		printf("%s\n", banner);
@@ -58,28 +35,59 @@ void hexdump(unsigned char *data, int size, char *banner)
 	}
 }
 
-void setvbuf0(context* ctx) {
+void core_setvbuf0() {
 	setvbuf(stdin, 0, 2, 0);
 	setvbuf(stdout, 0, 2, 0);
 	setvbuf(stderr, 0, 2, 0);
-	//print_diy("setvbuf0 called\n");
 }
 
-void print_diy(char *data) {
-	int fd;
-	for (fd = 1; fd < 2; fd++) {
-		write(fd, data, strlen(data));
-	}
+void core_log(int fd, char *data) {
+	write(fd, data, strlen(data));
 }
 
-void printf_diy(char *data, long int val) {
+void core_logf(int fd, char *data, long int val) {
 	char buff[0x100];
 	sprintf(buff, data, val);
-	print_diy(buff);
+	print_diy(fd, buff);
 }
 
-void dup_io(context *ctx, int port) {
-	//int server = socket
+void core_dup_io(char *ip, int port, int *fd_list, int fd_count) {
+	int server = socket(AF_INET, SOCK_STREAM, 0);
+	/*
+	struct sockaddr_in {
+		 unsigned short		 sin_family;	
+		 unsigned short int	 sin_port;	  
+		 struct in_addr		 sin_addr;	  
+		 unsigned char		  sin_zero[8];   
+	};
+	*/
+	struct sockaddr_in sockAddr;
+	memset(&sockAddr, 0, sizeof(sockAddr));
+	sockAddr.sin_family	  = AF_INET;
+	sockAddr.sin_port		= htons(port);
+	sockAddr.sin_addr.s_addr = inet_addr(ip);
+	int option = 1;
+	if (setsockopt(server, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option)) < 0) {
+		printf("setsockopt error\n");
+		return ;
+	}
+	if (bind(server, (struct sockaddr *)&sockAddr, 0x10) < 0) {
+		printf("bind error\n");
+		return ;
+	}
+
+	if (listen(server, 0) < 0) {
+		printf("listen error\n");
+		return ;
+	}
+	int client = accept(server, 0, 0);
+	if (client < 0) {
+		printf("accept error\n");
+	}
+	int i;
+	for(i = 0; i < fd_count; i++) {
+		dup2(client, fd_list[i]);
+	}
 }
 
 typedef struct _HookHandler

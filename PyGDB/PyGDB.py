@@ -299,7 +299,7 @@ class PyGDB():
 				self.sp_reg = "rsp"
 				self.pc_reg = "rip"
 				self.arch_args = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"]
-				self.context_regs = ["rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rbp", "rsp", "rip", "r8", "r9", "r11", "r12", "r13", "r14", "r15"]
+				self.context_regs = ["rax", "rbx", "rcx", "rdx", "rsi", "rdi", "rbp", "rsp", "rip", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"]
 			else:
 				self.sp_reg = "esp"
 				self.pc_reg = "eip"
@@ -320,6 +320,17 @@ class PyGDB():
 		else:
 			self.common_reg = "eax"
 		self.mov_asm = "mov"
+
+		self.nop_asm = ""
+		if self.is_arm():
+			if self.bits == 32:
+				self.nop_asm = "mov r0, r0"
+			else:
+				self.nop_asm = "mov x0, x0"
+		else:
+			self.nop_asm = "nop"
+		self.nop_code = self._asm_(self.nop_asm)
+
 
 		self.gdb_argv = []
 		self.gdb_argv.append(self.gdb_path)
@@ -2332,21 +2343,23 @@ class PyGDB():
 		self.write_mem(got_addr, got_data)
 
 	def load_lib_plt(self, lib_name, func_list = [], plt_base = None, got_base = None, config = True):
-
+		#if self.inject_hook_base == 0:
+		#	self.auto_config_inject()
 		plt_maps = {}
 		#print("here:", lib_name)
 		if os.path.exists(lib_name):
-			#print("load_lib_plt:", lib_name)
+			print("load_lib_plt:", lib_name)
 			elf_info = ELF(lib_name, checksec = True)
 
 			use_func_list = []
 			for key in elf_info.symbols.keys():
-				#print(key, func_list, key in func_list)
+				#print(key in func_list, key, func_list)
 				if key in func_list:
 					use_func_list.append(key)
 
 			sym_count = len(use_func_list)
 
+			#print("func_list:", func_list)
 			print("sym_count:", sym_count)
 			addr_size = self.bits / 8
 			if sym_count > 0:
@@ -2402,14 +2415,13 @@ class PyGDB():
 		source_data = self.gen_from_stack_value(source_data)
 		source_data = self.gen_from_common(source_data)
 		func_list = self.extract_func(source_data)
-		print("func_list:", func_list)
 
 		if auto_gen == False or os.path.exists(obj_name) == False or update == True:
 		
 			context(arch = self.arch, bits = self.bits, os = 'linux')
 
 			if option == "":
-				option += " -fPIC -shared"
+				option += " -fPIC -shared -L%s -lpygdb"%self.pygdb_libpath
 
 			if self.is_arm() == False:
 				if self.bits != 64:
@@ -2423,8 +2435,13 @@ class PyGDB():
 			#self.writefile(cfile_name, source)
 			#cmdline = "%s %s -o %s %s"%(gcc_path, option, obj_name, cfile_name)
 			#res = self.run_cmd(cmdline)
+			if os.path.exists(obj_name):
+				os.unlink(obj_name)
 			res = self.compile_cfile(source, gcc_path, option, cfile_name, obj_name)
 
+			if res == False:
+				raise Exception("compile_cfile error")
+			#print("rers:", res)
 			#"""
 			if auto_gen:
 				if os.path.exists(cfile_name):
@@ -3757,7 +3774,7 @@ int main() {
 			use_size = end_addr - addr
 			origin_data = self.read_mem(addr, use_size)
 			#intel mode
-			target_code = target_code.ljust(use_size, '\x90')
+			target_code = target_code.ljust(use_size, self.nop_code)
 			self.write_mem(addr, target_code)
 			self.inject_patch_map[addr] = [target_code, origin_data]
 		else:
@@ -4105,65 +4122,14 @@ int main() {
 		asm_code_list.append("%s %s"%(self.pop_asm, self.sp_reg))
 		return "\n".join(asm_code_list)
 
-	def inject_hook_func(self, addr, func, libname = "libc", args = [], ctx = True, show = False):
-		self.auto_config_inject(addr)
+	def inject_hook_func(self, addr, func, libname = "libc", args = [], show = False):
+		return self.core_inject_hook_func(addr, func = func, libname = libname, show = show)
 
-		if addr in self.inject_hook_map.keys():
-			self.remove_inject_hook(addr)
-
-		args_new = []
-		for key in args:
-			if type(key) is str:
-				addr = self.inject_hook_alloc(key)
-			else:
-				addr = key
-			args_new.append("0x%x"%(addr))
-
-		code_asm_list = []
-		if True:
-			args_new = [self.sp_reg] + args_new
-			if self.is_arm():
-				for i in range(len(args_new)):
-					code_asm_list.append("mov %s, %s"%(self.arch_args[i], args_new[i]))
-			else:
-				if self.bits == 32:
-					for i in range(len(args_new)-1, -1, -1):
-						code_asm_list.append("%s %s"%(self.push_asm, args_new[i]))
-				else:
-					for i in range(len(args_new)):
-						code_asm_list.append("mov %s, %s"%(self.arch_args[i], args_new[i]))
-
-		if type(func) == str:
-			if func in self.inject_hook_globals.keys():
-				func_addr = self.inject_hook_globals[func]
-			else:
-				func_addr = self.get_lib_func(func, libname = libname)
-		else:
-			func_addr = func
-
-		print("func:", func)
-		print("func_addr:", hex(func_addr))
-
-		if self.is_arm():
-			code_asm_list.append("%s r1, 0x%x"%(self.mov_asm, func_addr))
-			code_asm_list.append("blx r1")
-		else:
-			code_asm_list.append("%s %s, 0x%x"%(self.mov_asm, self.common_reg, func_addr))
-			code_asm_list.append("call %s"%self.common_reg)
-
-		if self.is_arm() == False and self.bits == 32:
-			for i in range(len(args_new)-1, -1, -1):
-				code_asm_list.append("%s %s"%(self.pop_asm, self,common_reg))
-
-		code_asm_bin = self._asm_("\n".join(code_asm_list))
-		#return self.inject_hook_asm(addr, "\n".join(code_asm_list), ctx = ctx, show = show)	
-		return self.inject_hook_code(addr, code_asm_bin, ctx = ctx, show = show)	
-
-	def inject_hook(self, addr, asm_code_func, hook_type = "asm", ctx = True, show = False):
+	def inject_hook(self, addr, asm_code_func, hook_type = "func", ctx = True, show = False):
 		if hook_type == "asm":
 			return self.inject_hook_asm(addr, asm_code_func, ctx = ctx, show = show)
 		else:
-			return self.core_inject_hook_func(addr, asm_code_func, ctx = ctx, show = show)
+			return self.core_inject_hook_func(addr, asm_code_func, show = show)
 
 	def inject_hook_code(self, addr, code, ctx = True, show = False):
 		self.auto_config_inject(addr)
@@ -4339,6 +4305,9 @@ int main() {
 			self.remvoe_inject_patch(key)
 
 	def inject_hook_alloc(self, data_size, align = None):
+		if self.inject_hook_base == 0:
+			self.auto_config_inject()
+
 		if type(data_size) in [str, bytes]:
 			data = data_size
 			size = len(data)

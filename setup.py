@@ -10,6 +10,7 @@ def gen_data_files(*dirs):
     return results
 
 data_files = gen_data_files("PyGDB/peda-arm")
+data_files = gen_data_files("PyGDB/lib")
 
 setup(
     name = 'PyGDB',
