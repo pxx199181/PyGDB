@@ -906,3 +906,8 @@ TODO
 - (4). remove some bugs
 - (5). modify test_fd example
 
+## 2022/4/18 Version 1.0.0
+- (1). add c func hook support
+- (2). add inject_hook_func / inject_hook_asm
+- (3). remove some bugs
+

@@ -346,6 +346,12 @@ class PyGDB():
 		if self.bin_path is not None:
 			self.do_gdb("file %s"%self.bin_path)
 
+		ld_library_path = self.get_ld_library_path().strip()
+		if ld_library_path != "":
+			ld_library_path += ":"
+		ld_library_path += self.pygdb_libpath
+		self.set_ld_library_path(ld_library_path)
+
 	def is_arm(self):
 		if self.arch.lower() in ["arm", "arch64"]:
 			return True
@@ -2373,7 +2379,7 @@ class PyGDB():
 		plt_maps = {}
 		#print("here:", lib_name)
 		if os.path.exists(lib_name):
-			print("load_lib_plt:", lib_name)
+			#print("load_lib_plt:", lib_name)
 			elf_info = ELF(lib_name, checksec = True)
 
 			use_func_list = []
@@ -2385,7 +2391,7 @@ class PyGDB():
 			sym_count = len(use_func_list)
 
 			#print("func_list:", func_list)
-			print("sym_count:", sym_count)
+			#print("sym_count:", sym_count)
 			addr_size = self.bits / 8
 			if sym_count > 0:
 				if plt_base is None:
@@ -2399,11 +2405,11 @@ class PyGDB():
 				if got_base is None:
 					raise Exception("got addr error")
 
-				print(lib_name, "load_lib")
+				#print(lib_name, "load_lib")
 				lib_base = self.load_lib(lib_name)
 				if lib_base == 0:
 					raise Exception("load lib error")
-				print(lib_name, "base:", hex(lib_base))
+				#print(lib_name, "base:", hex(lib_base))
 				elf_info.address = lib_base
 				idx = 0
 				for key in use_func_list:
@@ -3097,8 +3103,8 @@ int main() {
 		lib_full_path = os.path.realpath(lib_path)
 		#print("lib_full_path:", lib_full_path)
 		args = [lib_full_path + "\x00", 1] #LAZY
-		handle = self.call(self.priv_globals["dlopen"], args)#, debug_list = True)
-		print("handle:", lib_full_path, hex(handle))
+		handle = self.call(self.priv_globals["dlopen"], args)#, debug_list = debug_list)
+		#print("handle:", lib_full_path, hex(handle))
 		if handle == 0:
 			self.interact()
 		self.priv_globals["lib_handle"][lib_path] = handle
@@ -3819,12 +3825,6 @@ int main() {
 
 		pygdb_so_file = os.path.join(self.pygdb_libpath, "libpygdb.so")
 		
-		ld_library_path = self.get_ld_library_path().strip()
-		if ld_library_path != "":
-			ld_library_path += ":"
-		ld_library_path += self.pygdb_libpath
-		self.set_ld_library_path(ld_library_path)
-
 		func_list =  ["core_hook_dispatcher"]#, "hexdump", "setvbuf0"]
 		plt_maps, lib_base = self.load_lib_plt(pygdb_so_file, func_list = func_list, config = False)
 		
@@ -3976,7 +3976,7 @@ int main() {
 		pygdb_handler_array = self.core_pygdb_maps["pygdb_handler_array"]
 
 		addr_size = self.bits / 8
-		print("write 0x%x: 0x%x, 0x%x, 0x%x"%(pygdb_handler_array + (idx*3 + 0)*addr_size, hook_addr, handler, ret_addr))
+		#print("write 0x%x: 0x%x, 0x%x, 0x%x"%(pygdb_handler_array + (idx*3 + 0)*addr_size, hook_addr, handler, ret_addr))
 		self.write_pointer(pygdb_handler_array + (idx*3 + 0)*addr_size, hook_addr)
 		self.write_pointer(pygdb_handler_array + (idx*3 + 1)*addr_size, handler)
 		self.write_pointer(pygdb_handler_array + (idx*3 + 2)*addr_size, ret_addr)
@@ -4016,8 +4016,8 @@ int main() {
 			print("plt got alloc error")
 			return 
 
-		print("func:", func)
-		print("func_addr:", hex(func_addr))
+		#print("func:", func)
+		#print("func_addr:", hex(func_addr))
 
 		pygdb_handler_pos   = self.core_pygdb_maps["pygdb_handler_pos"]
 		pygdb_handler_size  = self.core_pygdb_maps["pygdb_handler_size"]

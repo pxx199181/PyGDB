@@ -51,7 +51,7 @@ void core_logf(int fd, char *data, long int val) {
 	core_log(fd, buff);
 }
 
-void core_dup_io(char *ip, int port, int *fd_list, int fd_count) {
+int core_build_server(char *ip, int port) {
 	int server = socket(AF_INET, SOCK_STREAM, 0);
 	/*
 	struct sockaddr_in {
@@ -69,24 +69,122 @@ void core_dup_io(char *ip, int port, int *fd_list, int fd_count) {
 	int option = 1;
 	if (setsockopt(server, SOL_SOCKET, SO_REUSEADDR, &option, sizeof(option)) < 0) {
 		printf("setsockopt error\n");
-		return ;
+		return -1;
 	}
 	if (bind(server, (struct sockaddr *)&sockAddr, 0x10) < 0) {
 		printf("bind error\n");
-		return ;
+		return -1;
 	}
 
 	if (listen(server, 0) < 0) {
 		printf("listen error\n");
-		return ;
+		return -1;
 	}
 	int client = accept(server, 0, 0);
 	if (client < 0) {
 		printf("accept error\n");
+		return -1;
+	}
+	return client;
+}
+
+
+int core_build_client(char *ip, int port) {
+	int sock = socket(AF_INET, SOCK_STREAM, 0);
+	/*
+	struct sockaddr_in {
+		 unsigned short		 sin_family;	
+		 unsigned short int	 sin_port;	  
+		 struct in_addr		 sin_addr;	  
+		 unsigned char		  sin_zero[8];   
+	};
+	*/
+	struct sockaddr_in sockAddr;
+	memset(&sockAddr, 0, sizeof(sockAddr));
+	sockAddr.sin_family	  = AF_INET;
+	sockAddr.sin_port		= htons(port);
+	sockAddr.sin_addr.s_addr = inet_addr(ip);
+	int option = 1;
+	if (connect(sock, (struct sockaddr *)&sockAddr, 0x10) < 0) {
+		printf("bind error\n");
+		return -1;
+	}
+
+	return sock;
+}
+
+int core_dup_io(char *ip, int port, int *fd_list, int fd_count, int mode) {
+
+	int sock;
+	if (mode == 1) {
+	 	sock = core_build_server(ip, port);
+	} else {
+		sock = core_build_client(ip, port);
 	}
 	int i;
 	for(i = 0; i < fd_count; i++) {
-		dup2(client, fd_list[i]);
+		dup2(sock, fd_list[i]);
+	}
+	return sock;
+}
+
+void parse_sock_info(char *addrData, char* sockInfo) {
+	int family = *(short int*)(addrData);
+	char ipInfo[0x40];
+	int port = ntohs(*(short int*)(addrData + 2));
+	strcpy(ipInfo, "");
+	strcpy(sockInfo, "");
+	if (family == AF_INET) {
+		if (inet_ntop(AF_INET, addrData + 4, ipInfo, 0x10) < 0)
+			return ;
+		sprintf(sockInfo, "%s:%d", ipInfo, port);
+	} else if (family == AF_INET6) {
+		if (inet_ntop(AF_INET, addrData + 8, ipInfo, 0x20) < 0)
+			return ;
+		sprintf(sockInfo, "[%s]:%d", ipInfo, port);		
+	}
+}
+
+void get_file_info(int fd, char *data, int max_size) {
+	char filename[0x100] = {0};
+	sprintf(filename, "/proc/self/fd/%d", fd);
+	int size = readlink(filename, data, max_size);
+	if (size <= 0) {
+		strcpy(data, "");
+	} else {
+		data[size] = 0;
+	}
+}
+
+void get_sock_info(int sock, char *data, int max_size) {
+	char addrData[0x20] = {0};
+	char sockInfo[0x40] = {0};
+	int size = 0x20;
+	strcpy(data, "");
+	if (getsockname(sock, addrData, &size) == 0) {
+		parse_sock_info(addrData, sockInfo);
+		strcat(data, sockInfo);
+	}
+	memset(addrData, 0x0, 0x20);
+	size = 0x20;
+	strcpy(sockInfo, "");
+	if (getpeername(sock, addrData, &size) == 0) {
+		parse_sock_info(addrData, sockInfo);
+		if (strlen(sockInfo) != 0 && strlen(data) != 0)
+			strcat(data, "<=>");
+		strcat(data, sockInfo);
+	}
+}
+
+void core_get_fd_info(int fd, char *data) {
+	char info[0x100] = {0};
+	strcpy(data, "");
+	get_file_info(fd, info, 0x100);
+	strcpy(data, info);
+	if (memcmp(info, "socket:", 0x7) == 0 || strlen(info) == 0) {
+		get_sock_info(fd, info, 0x100);
+		if (strlen(info) != 0)
+			strcpy(data, info);
 	}
 }
 
@@ -174,5 +272,4 @@ void core_hook_dispatcher(context *ctx) {
 			break;
 		}
 	}
-
 }

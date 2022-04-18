@@ -33,7 +33,10 @@ void core_hexdump(unsigned char *data, int size, char *banner);
 void core_setvbuf0();
 void core_log(int fd, char *data);
 void core_logf(int fd, char *data, long int val);
-void core_dup_io(char *ip, int port, int *fd_list, int fd_count);
+int core_dup_io(char *ip, int port, int *fd_list, int fd_count, int mode);
+int core_build_server(char *ip, int port);
+int core_build_client(char *ip, int port);
+void core_get_fd_info(int fd, char *data);
 
 #endif 
 //PYGDB_H

@@ -17,10 +17,23 @@ void show_context(context* ctx) {
 	core_logf(1, "rcx: 0x%llx\n", ctx->rcx);
 	core_logf(1, "hook addr: 0x%llx\n", ctx->rip);
 	core_logf(1, "hook rsp: 0x%llx\n", ctx->rsp);
+
+	//return ;
+	char info[0x100];
+	int i;
+	for (i = 0; i < 5; i++) {
+		core_get_fd_info(i, info);
+		printf("fd[%d]: %s\n", i, info);
+	}
 }
 
-void dup_io(context *ctx, int port) {
+void dup_io(context *ctx) {
 	//int server = socket
 	int fd_list[3] = {0, 1, 2};
-	core_dup_io("127.0.0.1", 12345, fd_list, 3);
+	core_dup_io("127.0.0.1", 12345, fd_list, 3, 2);
+}
+
+void init_hook(context *ctx) {
+	setvbuf0(ctx);
+	dup_io(ctx);
 }
