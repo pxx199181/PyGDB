@@ -496,7 +496,8 @@ def test_inject_hook():
 	pygdb.start()
 
 	pygdb.setvbuf0()
-	pygdb.dup_io(port = 12346, new_terminal = True)
+	#pygdb.dup_io(port = 12346, new_terminal = True)
+	pygdb.dup_io(port = 12346, new_terminal = False)
 	import time
 	time.sleep(2)
 
@@ -562,7 +563,7 @@ void show_contenxt(context* ctx) {
 	#plt_maps = pygdb.load_source_lib(c_source, obj_name = "inject_hook.so")
 	plt_maps = pygdb.load_cfile_lib("inject_hook.c", obj_name = "inject_hook.so")
 	print("plt_maps:", plt_maps)
-	pygdb.core_inject_hook_func(0x40055A, "show_contenxt", show = True)
+	pygdb.inject_hook_func(0x40055A, "show_contenxt", show = True)
 
 	pygdb.inject_patch_asm(0x4004ED, "nop")
 

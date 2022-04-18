@@ -48,7 +48,7 @@ void core_log(int fd, char *data) {
 void core_logf(int fd, char *data, long int val) {
 	char buff[0x100];
 	sprintf(buff, data, val);
-	print_diy(fd, buff);
+	core_log(fd, buff);
 }
 
 void core_dup_io(char *ip, int port, int *fd_list, int fd_count) {

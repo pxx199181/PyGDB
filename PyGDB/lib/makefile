@@ -1,2 +1,2 @@
 all:
-	gcc -fPIC -shared -o pygdb.so pygdb.c
+	gcc -fPIC -shared -o libpygdb.so pygdb.c

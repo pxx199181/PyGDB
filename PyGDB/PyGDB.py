@@ -394,6 +394,9 @@ class PyGDB():
 		else:
 			self.io = process(argv = self.gdb_argv)
 			pids = proc.pidof(self.io)
+		#print(" ".join(self.gdb_argv))
+		#print(self.target_args)
+		#self.interact()
 		self.set_args(self.target_args)
 
 		
@@ -425,6 +428,28 @@ class PyGDB():
 			args = args.split(" ")
 		self.target_args = args
 		self.do_gdb_ret("set args %s"%(" ".join(self.target_args)))
+
+	def get_env(self, name = ""):
+		data = self.do_gdb_ret("show environment %s"%name)
+		if "not defined." in data:
+			return ""
+		else:
+			return data
+
+	def set_env(self, name = "", value = ""):
+		return self.do_gdb_ret("set environment %s %s"%(name, value))
+
+	def set_ld_repload(self, libname):
+		return self.set_env("LD_PRELOAD", libname)
+
+	def get_ld_repload(self):
+		return self.get_env("LD_PRELOAD")
+
+	def set_ld_library_path(self, ld_path):
+		return self.set_env("LD_LIBRARY_PATH", ld_path)
+
+	def get_ld_library_path(self):
+		return self.get_env("LD_LIBRARY_PATH")
 
 	def set_call_addr(self, use_addr = None):
 		self.safe_call_addr = use_addr# + 0x4
@@ -2236,7 +2261,7 @@ class PyGDB():
 
 	def compile_cfile(self, source, gcc_path, option, infile, outfile):
 		self.writefile(infile, source)
-		cmdline = "%s %s -o %s %s"%(gcc_path, option, outfile, infile)
+		cmdline = "%s %s %s -o %s"%(gcc_path, infile, option, outfile)
 		res = self.run_cmd(cmdline)
 		#print("compile_cmd:", cmdline)
 		if ("error: " not in res.lower()):
@@ -2399,6 +2424,8 @@ class PyGDB():
 		return self.load_source_lib(source_data, plt_base = plt_base, got_base = got_base, gcc_path = gcc_path, option = option, obj_name = obj_name, update = update)
 
 	def load_source_lib(self, source_data, plt_base = None, got_base = None, gcc_path = "gcc", option = "", obj_name = None, update = True):
+		if len(self.core_pygdb_maps.keys()) == 0:
+			self.core_inject_init(show = False)
 
 		auto_gen = False
 		if obj_name is None:
@@ -2421,7 +2448,7 @@ class PyGDB():
 			context(arch = self.arch, bits = self.bits, os = 'linux')
 
 			if option == "":
-				option += " -fPIC -shared -L%s -lpygdb"%self.pygdb_libpath
+				option += " -fPIC -shared -I %s -L %s -lpygdb"%(self.pygdb_libpath, self.pygdb_libpath)
 
 			if self.is_arm() == False:
 				if self.bits != 64:
@@ -3071,7 +3098,9 @@ int main() {
 		#print("lib_full_path:", lib_full_path)
 		args = [lib_full_path + "\x00", 1] #LAZY
 		handle = self.call(self.priv_globals["dlopen"], args)#, debug_list = True)
-		#print("handle:", lib_full_path, hex(handle))
+		print("handle:", lib_full_path, hex(handle))
+		if handle == 0:
+			self.interact()
 		self.priv_globals["lib_handle"][lib_path] = handle
 		self.priv_globals["lib_base"][lib_path] = self.read_pointer(handle)
 		self.priv_globals['lib_path'][lib_path] = lib_path
@@ -3788,14 +3817,17 @@ int main() {
 		if "pygdb_dispatch_addr" in self.core_pygdb_maps.keys():
 			return 
 
-		pygdb_so_file = os.path.join(self.pygdb_libpath, "pygdb.so")
-		func_list =  ["core_hook_dispatcher", "hexdump", "setvbuf0"]
+		pygdb_so_file = os.path.join(self.pygdb_libpath, "libpygdb.so")
+		
+		ld_library_path = self.get_ld_library_path().strip()
+		if ld_library_path != "":
+			ld_library_path += ":"
+		ld_library_path += self.pygdb_libpath
+		self.set_ld_library_path(ld_library_path)
+
+		func_list =  ["core_hook_dispatcher"]#, "hexdump", "setvbuf0"]
 		plt_maps, lib_base = self.load_lib_plt(pygdb_so_file, func_list = func_list, config = False)
 		
-		for key in ["hexdump", "setvbuf0"]:
-			self.inject_hook_globals[key] = plt_maps[key]
-			plt_maps.pop(key)
-
 		self.core_pygdb_maps = plt_maps
 
 		func_list = ["pygdb_handler_array", "pygdb_handler_size", "pygdb_handler_pos"]
