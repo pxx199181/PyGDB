@@ -218,6 +218,7 @@ class PyGDB():
 		self.arch = arch
 		self.bits = None
 		self.hook_map = {}
+		self.hook_num_map = {}
 		self.io = None
 		self.gdb_pid = None
 		self.dbg_pid = None
@@ -464,6 +465,8 @@ class PyGDB():
 		self.is_local = True
 		result = self.do_gdb_ret("start")
 		self.dbg_pid = self.get_dbg_pid()
+		if type(self.dbg_pid) != int:
+			return ; 
 		self.target_argv = "attach %d"%self.dbg_pid
 
 	def run(self, args = None):
@@ -476,6 +479,8 @@ class PyGDB():
 				cmdline += " " + " ".join(args)
 		result = self.do_gdb_ret(cmdline)
 		self.dbg_pid = self.get_dbg_pid()
+		if type(self.dbg_pid) != int:
+			return ; 
 		self.target_argv = "attach %d"%self.dbg_pid
 
 	def do_pygdb_syn(self):
@@ -502,6 +507,8 @@ class PyGDB():
 	def do_pygdb_ret(self, cmdline):
 		self.io.sendline("pyCmdRet %s"%cmdline)
 
+		#print "cmdline:->", cmdline, "<>"
+
 		begin_s = "pyCmd-B{"
 		end_s = "}pyCmd-E"
 		#self.io.recvuntil(begin_s)
@@ -510,10 +517,11 @@ class PyGDB():
 			data = self.io.recvuntil(end_s)
 			pos = data.rfind(begin_s)
 			if pos != -1:
-				#print "data:", data
+				#print "data:<begin>", data, "<end>"
 				data = data[pos + len(begin_s):-len(end_s)]
 				break
 		data = data.decode("hex")
+		#print "decode:->", data, "<>"
 		if data == '':
 			return ''
 		value = json.loads(data)
@@ -543,7 +551,7 @@ class PyGDB():
 		if prefix is not None:
 			b_pos = data.find(prefix)
 			if b_pos == -1:
-				return None
+				return ''
 			b_pos += len(prefix)
 		else:
 			b_pos = 0
@@ -551,7 +559,7 @@ class PyGDB():
 		if suffix is not None:
 			e_pos = data.find(suffix, b_pos)
 			if e_pos == -1:
-				return None
+				return ''
 		else:
 			e_pos = len(data)
 		return data[b_pos:e_pos]
@@ -577,6 +585,7 @@ class PyGDB():
 				thread_id = self.get_thread_idv()
 			cmdline = "%s %s thread %d"%(cmd, addr_str, thread_id)
 			#print("thread_set_bp:", cmdline)
+		#print("cmdline:", cmdline)
 		ret_v = self.do_gdb_ret(cmdline)
 		#print "ret_v:", ret_v
 		b_num = re.search("reakpoint \d+ at", ret_v)
@@ -1150,9 +1159,11 @@ class PyGDB():
 
 			num_ret, addr_v_ret = self.set_bp(ret_addr, thread_id = thread_id)
 			self.hook_map[ret_addr] = [num_ret, handler, args, ret_addr, ["OnRet", None, None]]
+			self.hook_num_map[num_ret] = ret_addr
 		else:
 			num_ret, ret_addr = None, None
 		self.hook_map[addr_v] = [num, handler, args, addr, ["OnEnter", num_ret, ret_addr]]
+		self.hook_num_map[num] = addr_v
 		return addr_v
 
 	def hook_mem_read(self, addr, handler, args = [], thread_id = None):
@@ -1180,6 +1191,7 @@ class PyGDB():
 		num_ret, ret_addr = None, None
 
 		self.hook_map[addr_v] = [num, handler, args, addr, ["OnMem", w_type]]
+		self.hook_num_map[num] = addr_v
 		return addr_v
 
 	def hook_catch_syscall(self, info, handler, args = []):
@@ -1213,29 +1225,35 @@ class PyGDB():
 			catch_type = "syscall"
 		if num is not None:
 			self.hook_map[addr_v] = [num, handler, args, info, ["OnCatch", catch_type]]
+			self.hook_num_map[num] = addr_v
 		else:
 			addr_v = "error"
 		return addr_v
 
 	
 	def restore_hook(self):
+		self.hook_num_map = {}
 		for addr in self.hook_map.keys():
 			[num, handler, args, addr, hook_info] = self.hook_map[addr_v]
 			if hook_info[0] not in ["OnMem", "OnCatch"]:
 				num, addr_v = self.set_bp(addr)
 				self.hook_map[addr_v] = [num, handler, args, addr, hook_info]
+				self.hook_num_map[num] = addr_v
 			elif hook_info[0] == "OnMem":
 				num, addr_v = self.set_mem_bp(addr, hook_info[1])
 				self.hook_map[addr_v] = [num, handler, args, addr, hook_info]	
+				self.hook_num_map[num] = addr_v
 			elif hook_info[0] == "OnCatch":
 				num, addr_v = self.set_catch_bp(addr, hook_info[1])
 				self.hook_map[addr_v] = [num, handler, args, addr, hook_info]				
+				self.hook_num_map[num] = addr_v
 			return 
 
 	def clear_hook(self):
 		for addr in self.hook_map.keys():
 			self.remove_hook(addr)
 		self.hook_map = {}
+		self.hook_num_map = {}
 
 	def remove_hook(self, addr, is_pie = False):
 		addr = self.real_addr(addr, is_pie)
@@ -1249,6 +1267,7 @@ class PyGDB():
 					self.hook_map.pop(hook_info[2])
 			self.del_bp(num)
 			self.hook_map.pop(addr)
+			self.hook_num_map.pop(num)
 					
 		elif type(addr) is str:
 			for key in self.hook_map.keys():
@@ -1261,6 +1280,7 @@ class PyGDB():
 
 					self.del_bp(num)
 					self.hook_map.pop(key)
+					self.hook_num_map.pop(num)
 					break
 
 	def run_until(self, addr, is_pie = False, syn = False):
@@ -1288,6 +1308,38 @@ class PyGDB():
 					self.do_pygdb_syn()
 				return -1
 
+	def deal_catch_hook(self, addr_v, msg = ''):
+		if addr_v in self.hook_map.keys():
+			#print("in deal_catch_hook")
+			num, handler, args, addr, hook_info = self.hook_map[addr_v]
+
+			#values = re.findall("alue = 0x[0-9a-fA-F]+\n", msg)
+			catch_type = hook_info[1]
+			info = "unknown"
+			if catch_type in ["syscall"]:
+				#infos = re.findall("\(* syscall *\)", msg)
+				info_use = self.cut_str(msg, " (", " syscall ").strip()
+				syscall_name = self.cut_str(msg, " syscall ", ")").strip()
+				if "call to" in info_use:
+					info = "OnEnter"
+				elif "returned from" in info_use:
+					info = "OnRet"
+				args = [syscall_name] + args
+				#print(info, syscall_name)
+			elif catch_type in ["load", "unload"]:
+				info_use = self.cut_str(msg, "loaded ", "\n").strip()
+				if info_use != "":
+					info = info_use.split("loaded ")[-1].strip()
+			elif catch_type in ["signal"]:
+				info_use = self.cut_str(msg, "(signal ", ")").strip()
+				if info_use != "":
+					info = info_use.strip()
+			#print("handler:", handler)
+			ret_v = handler(self, info, *args)
+			if ret_v is None or ret_v == True:
+				return True
+		return False
+
 	def DealHook(self, msg):
 		pc = self.get_reg("pc")
 		if pc in self.hook_map.keys(): #breakpoint hook
@@ -1296,66 +1348,64 @@ class PyGDB():
 			if ret_v is None or ret_v == True:
 				return True, pc
 		else:
-			#print("msg:", msg)
-			b_num = re.search("atchpoint \d+:", msg)
-			if b_num: #mem breakpoint hook
-				#print("in watchpoint")
-				b_num = b_num.group().split()[1].strip(":")
-				fini_num = int(b_num)
-
-				addr_v = self.cut_str(msg, "atchpoint %d: *"%fini_num)
-				if "\n" in addr_v:
-					addr_v = addr_v.split("\n")[0]
-				if addr_v is not None:
-					addr_v = int(addr_v, 16)
-
-				if addr_v in self.hook_map.keys():
-					values = re.findall("alue = 0x[0-9a-fA-F]+\n", msg)
-					for idx in range(len(values)):
-						values[idx] = int(values[idx].split(" = ")[-1].strip(), 16)
-					num, handler, args, addr, hook_info = self.hook_map[addr_v]
-					ret_v = handler(self, values, *args)
-					if ret_v is None or ret_v == True:
-						return True, pc
-			else:
-				b_num = re.search("atchpoint \d+", msg)
-				#print("-"*0x10)
-				#print(repr(msg))
-				#print(b_num)
-				#print("-"*0x10)
-				if b_num:
-					b_num = b_num.group().split()[1].strip()
-					#print("b_num:", b_num)
+			if "atchpoint" in msg and False:
+				#print("msg:", msg)
+				b_num = re.search("atchpoint \d+:", msg)
+				if b_num: #mem breakpoint hook
+					#print("in watchpoint")
+					b_num = b_num.group().split()[1].strip(":")
 					fini_num = int(b_num)
-					addr_v = "catch_%d"%fini_num
+
+					addr_v = self.cut_str(msg, "atchpoint %d: *"%fini_num)
+					if "\n" in addr_v:
+						addr_v = addr_v.split("\n")[0]
+					if addr_v is not None:
+						addr_v = int(addr_v, 16)
 
 					if addr_v in self.hook_map.keys():
+						values = re.findall("alue = 0x[0-9a-fA-F]+\n", msg)
+						for idx in range(len(values)):
+							values[idx] = int(values[idx].split(" = ")[-1].strip(), 16)
 						num, handler, args, addr, hook_info = self.hook_map[addr_v]
-
-						#values = re.findall("alue = 0x[0-9a-fA-F]+\n", msg)
-						catch_type = hook_info[1]
-						info = "unkown"
-						if catch_type in ["syscall"]:
-							#infos = re.findall("\(* syscall *\)", msg)
-							info_use = self.cut_str(msg, " (", " syscall ").strip()
-							syscall_name = self.cut_str(msg, " syscall ", ")").strip()
-							if "call to" in info_use:
-								info = "OnEnter"
-							elif "returned from" in info_use:
-								info = "OnRet"
-							args = [syscall_name] + args
-							#print(info, syscall_name)
-						elif catch_type in ["load", "unload"]:
-							info_use = self.cut_str(msg, "loaded ", "\n").strip()
-							if info_use != "":
-								info = info_use.split("loaded ")[-1].strip()
-						elif catch_type in ["signal"]:
-							info_use = self.cut_str(msg, "(signal ", ")").strip()
-							if info_use != "":
-								info = info_use.strip()
-						ret_v = handler(self, info, *args)
+						ret_v = handler(self, values, *args)
 						if ret_v is None or ret_v == True:
 							return True, pc
+				else:
+					b_num = re.search("atchpoint \d+", msg)
+					#print("-"*0x10)
+					#print(repr(msg))
+					#print(b_num)
+					#print("-"*0x10)
+					if b_num:
+						b_num = b_num.group().split()[1].strip()
+						#print("b_num:", b_num)
+						fini_num = int(b_num)
+						addr_v = "catch_%d"%fini_num
+
+						return self.deal_catch_hook(addr_v, msg), pc
+
+			msg = self.do_gdb_ret("info program")
+			items = re.findall("breakpoint \d+", msg)
+			if len(items) > 0:
+				hit_sign = False
+				for item in items:
+					b_num = int(item.strip().split()[-1])
+					#print("b_num:", b_num)
+					if b_num in self.hook_num_map.keys():
+						#print("b_num:", "in")
+						hit_sign = True
+						addr_v = self.hook_num_map[b_num]
+						if addr_v == "catch_%d"%b_num:
+							print("addr_v:", addr_v)
+							self.deal_catch_hook(addr_v)
+						else:
+							num, handler, args, addr, hook_info = self.hook_map[addr_v]
+							print("hook_info:", hook_info)
+							ret_v = handler(self, [], *args)
+				if hit_sign == True:
+					return True, pc
+				else:
+					return False, pc				
 			return False, pc
 
 	def go(self, syn = False):
@@ -3264,7 +3314,7 @@ int main() {
 		elif skip_sign == 3:
 			return "addr_list"
 		else:
-			return "unkown_%d"%skip_sign
+			return "unknown_%d"%skip_sign
 
 	def trace(self, b_addr = None, e_addr = None, logPattern = "trace", record_maps = [], skip_list = [], byThread = False, asmCode = True, appendMode = False, is_pie = False, rec_base = 0x0, skip_loops = True, trace_handler = None, function_mode = False, show = True, oneThread = True, level_mode = True, start_level = 0, level_str = "  "):
 

@@ -2398,8 +2398,9 @@ class IntelPEDACmd(PEDACmd):
         Usage:
             MYNAME count
         """
-        self.peda.execute_redirect("continue")
-        return "continue"
+        #return gdb.execute("continue", from_tty = True, to_string=True)
+        return self.peda.execute_redirect("continue")
+        #"continue"
 
     def _diy_read_mem(self, arg):
         """
@@ -2484,7 +2485,7 @@ class IntelPEDACmd(PEDACmd):
             MYNAME count
         """
         cmdline = " ".join([str(c) for c in arg])
-        msg("cmdline:" + cmdline)
+        #msg("cmdline:" + cmdline)
         return self.peda.execute_redirect(cmdline)
 
     def _diy_set_interact_mode(self, arg):
@@ -2550,7 +2551,8 @@ class IntelPEDACmd(PEDACmd):
 
         cmdline = args[0]
 
-        #msg("cmdline:" + cmdline)
+        #msg("peda args:" + repr(args))
+        #msg("peda cmdline:" + cmdline)
         if cmdline in self.function_map.keys():
             #msg("find it:" + repr(self.function_map[cmdline]))
             #data = self.function_map[cmdline](self, args)
@@ -2559,7 +2561,7 @@ class IntelPEDACmd(PEDACmd):
                 #data = self._diy_gdb_cmd(args[1:])
                 data = self.function_map[cmdline](self, arg[1:])
 
-                #msg("type3:" + repr(type(data)))
+                #msg("peda data:" + repr(data) + "<e>")
 
                 content = json.dumps({"data":data, "code":1})
                 str2hex(content.encode('utf-8')).decode('utf-8')
