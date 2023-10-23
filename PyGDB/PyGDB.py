@@ -1050,6 +1050,23 @@ class PyGDB():
 	def write_mem(self, addr, data):
 		return self.set_mem(addr, data)
 
+	def read_string_list(self, addr, count = 1):
+	    data = self.execute("x/%ds 0x%x"%(count, addr)).strip()
+	    result = []
+	    for line in data.split("\n"):
+	    	if ":" not in line:
+	    		continue
+	        line = ":".join(line.split(":")[1:]).strip()
+	        result.append(line[1:-1])
+	    return result
+
+	def read_string(self, addr, count = 1):
+	    result = self.read_string_list(addr, 1)
+	    if len(result) >= 1:
+	    	return result[0]
+	    else:
+	    	return ""
+
 	def read_byte(self, addr):
 		return u8(self.read_mem(addr, 1))
 
