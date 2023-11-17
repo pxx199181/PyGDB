@@ -492,6 +492,11 @@ class PyGDB():
 			print(self.do_gdb_ret("attach %d"%target))
 			self.target_argv = "attach %d"%target
 
+			info = self.do_gdb_ret("info proc")
+			if len(info) == 0:
+				print("maybe you should run with sudo")
+				exit(0)
+
 	def set_args(self, args):
 		if type(args) in [str, bytes]:
 			args = args.split(" ")
