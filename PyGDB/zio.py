@@ -1699,7 +1699,8 @@ def all_pids():
     return [int(pid) for pid in os.listdir('/proc') if pid.isdigit()]
 
 def pidof_socket(prog):        # code borrowed from https://github.com/Gallopsled/pwntools to implement gdb attach of local socket
-    def toaddr((host, port)):
+    def toaddr(val):
+        (host, port) = val
         return '%08X:%04X' % (l32(socket.inet_aton(host)), port)
     def getpid(loc, rem):
         loc = toaddr(loc)

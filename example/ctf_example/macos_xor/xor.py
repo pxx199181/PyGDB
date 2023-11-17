@@ -9,9 +9,9 @@ def main():
         elif bpType == "OnRet":
             size = pygdb.globals["malloc_size"]
             addr = pygdb.get_reg("rax")
-            print "malloc(0x%x) = 0x%x"%(size, addr)
+            print("*"*0x20)
+            print("malloc(0x%x) = 0x%x"%(size, addr))
             pygdb.heapinfo()
-            print "*"*0x20
     
     def hook_calloc(pygdb, bpType):
         if bpType == "OnEnter":
@@ -19,19 +19,19 @@ def main():
         elif bpType == "OnRet":
             size = pygdb.globals["calloc_size"]
             addr = pygdb.get_reg("rax")
-            print "calloc(0x%x) = 0x%x"%(size, addr)
+            print("*"*0x20)
+            print("calloc(0x%x) = 0x%x"%(size, addr))
             pygdb.heapinfo()
-            print "*"*0x20
             #raw_input(":")
 
     def hook_free(pygdb, bpType):
         if bpType == "OnEnter":
             addr = pygdb.get_reg("rdi")
-            print "free(0x%x)"%(addr)
+            print("*"*0x20)
+            print("free(0x%x)"%(addr))
         elif bpType == "OnRet":
-            print "free over"
+            print("free over")
             pygdb.heapinfo()
-            print "*"*0x20
 
     binary_path = "/bin/cat"
     pygdb = PyGDB(target = binary_path)
@@ -100,7 +100,11 @@ def main():
                 print("cheating")
                 global_addr = 0x100000F6E
                 data = pygdb.read_mem(global_addr, 33)
-                pygdb.write_mem(rdi, data + "\x00")
+                if type(data) == str:
+                    data += "\x00"
+                else:
+                    data += b"\x00"
+                pygdb.write_mem(rdi, data)
 
                 #pygdb.interact()
 
@@ -115,7 +119,10 @@ def main():
             print("strncmp(%s, %s, %d)"%(repr(rdiStr), repr(rsiStr), rdx))
             print(rdiStr == rsiStr)
             if pygdb.globals["mode"] == 1:
-                rdiStr = "got flag is: " + rdiStr + "\n\x00"
+                if type(rdiStr) == str:
+                    rdiStr = "got flag is: " + rdiStr + "\n\x00"
+                else:
+                    rdiStr = b"got flag is: " + rdiStr + b"\n\x00"
                 #data = data + "\n\x00"
                 args = [rdiStr]
                 pygdb.call_s("printf", args)#, debug_list = ["printf"])

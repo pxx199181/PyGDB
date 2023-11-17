@@ -24,9 +24,9 @@ def main():
         elif bpType == "OnRet":
             size = pygdb.globals["malloc_size"]
             addr = pygdb.get_reg("rax")
-            print "malloc(0x%x) = 0x%x"%(size, addr)
+            print("*"*0x20)
+            print("malloc(0x%x) = 0x%x"%(size, addr))
             pygdb.heapinfo()
-            print "*"*0x20
     
     def hook_calloc(pygdb, bpType):
         if bpType == "OnEnter":
@@ -34,19 +34,19 @@ def main():
         elif bpType == "OnRet":
             size = pygdb.globals["calloc_size"]
             addr = pygdb.get_reg("rax")
-            print "calloc(0x%x) = 0x%x"%(size, addr)
+            print("*"*0x20)
+            print("calloc(0x%x) = 0x%x"%(size, addr))
             pygdb.heapinfo()
-            print "*"*0x20
             #raw_input(":")
 
     def hook_free(pygdb, bpType):
         if bpType == "OnEnter":
             addr = pygdb.get_reg("rdi")
-            print "free(0x%x)"%(addr)
+            print("*"*0x20)
+            print("free(0x%x)"%(addr))
         elif bpType == "OnRet":
-            print "free over"
+            print("free over")
             pygdb.heapinfo()
-            print "*"*0x20
 
     binary_path = "nvram_exp"
     pygdb = PyGDB(target = binary_path)
@@ -205,7 +205,7 @@ def main():
 
     #pygdb.setHeapFilter("fastbin|tcache|unsortbin")
     data = pygdb.execute("print &main_arena")
-    print "data:", repr(data)
+    print("data:", repr(data))
 
     libc_elf = ELF("/lib/x86_64-linux-gnu/libc.so.6")
     libc_elf.address = pygdb.libc()

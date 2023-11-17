@@ -24,7 +24,7 @@ def test_intel():
 	data = pygdb.get_mem(0x8048621, 20)
 	#print("data:", data)
 	for v in data:
-		print(ord(v), type(v))
+		print(v, type(v))
 
 	print(pygdb.set_mem(0x8048621, "\x01"*0x10))
 	data = pygdb.get_mem(0x8048621, 20)
@@ -201,7 +201,7 @@ def test_mmap():
 	code_data = pygdb.gen_payload(c_source, "upper_str")#, obj_name = "uuu_obj")
 	code_addr = 0x8304000
 	data_addr = 0x8300000
-	#print data.encode("hex")
+	#print(data).encode("hex")
 
 
 	map_config = {
@@ -219,11 +219,11 @@ def test_mmap():
 	args = [data_addr, 0x20]
 
 	code_asm = pygdb.get_code(code_addr, 0x100)
-	print "code_asm:"
-	print code_asm
+	print("code_asm:")
+	print(code_asm)
 	code_asm = pygdb.get_code(0x830417e, 0x50)
-	print "code_asm:"
-	print code_asm
+	print("code_asm:")
+	print(code_asm)
 	
 	def hook_count(pygdb, bpType, id, addr, value):
 		#rdi = pygdb.
@@ -233,18 +233,18 @@ def test_mmap():
 				pygdb.remove_hook(addr)
 				del pygdb.globals["count"]
 				return
-			print "count", pygdb.globals["count"]
+			print("count", pygdb.globals["count"])
 
 	pygdb.globals["count"] = 0
 	#pygdb.hook(0x8304029, hook_count, [pygdb, 0, 0x8304029, "call 0x8304029",])
 
 	#pygdb.set_bp(code_addr)
 	ret_v = pygdb.call(code_addr, args)
-	print "ret_v:", repr(ret_v), type(ret_v)
-	print pygdb.globals
+	print("ret_v:", repr(ret_v), type(ret_v))
+	print(pygdb.globals)
 
 	str_info = pygdb.readString(data_addr)
-	print str_info
+	print(str_info)
 	return
 
 def test_patch():
@@ -283,11 +283,11 @@ def test_dup_io():
 	def hook(pygdb, bpType):
 		if bpType == "OnEnter":
 			data = pygdb.get_regs()
-			print data
+			print(data)
 			data = pygdb.get_code(count = 10)
-			print data
+			print(data)
 			data = pygdb.get_stack(count = 20)
-			print data
+			print(data)
 
 	pygdb = PyGDB(target = "./test_dup_io")
 	b_id, _ = pygdb.set_bp("main")
@@ -457,7 +457,7 @@ def test_inject():
 	code_data = pygdb.gen_payload(c_source, "main_logic_function")#, obj_name = "uuu_obj")
 	code_addr = 0x8304000
 	data_addr = 0x8300000
-	#print data.encode("hex")
+	#print(data).encode("hex")
 
 	map_config = {
 		data_addr:[0x1000, "rw"],
@@ -661,13 +661,13 @@ def test_fd():
 import sys
 if __name__ == "__main__":
 	if len(sys.argv) < 2:
-		print "useage:"
-		print "\t python test_pygdb.py intel/arm/hook/mmap/patch/dup_io/trace/catch/inject/inject_hook"
+		print("useage:")
+		print("\t python test_pygdb.py intel/arm/hook/mmap/patch/dup_io/trace/catch/inject/inject_hook")
 	else:
 		if sys.argv[1] == "intel":
 			test_intel()
 		elif sys.argv[1] == "arm":
-			print "please run ./run_arm.sh first"
+			print("please run ./run_arm.sh first")
 			test_arm()
 		elif sys.argv[1] == "hook":
 			test_hook()

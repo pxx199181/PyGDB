@@ -7,9 +7,9 @@ def main():
         elif bpType == "OnRet":
             size = pygdb.globals["malloc_size"]
             addr = pygdb.get_reg("rax")
-            print "malloc(0x%x) = 0x%x"%(size, addr)
+            print("*"*0x20)
+            print("malloc(0x%x) = 0x%x"%(size, addr))
             pygdb.heapinfo()
-            print "*"*0x20
     
     def hook_calloc(pygdb, bpType):
         if bpType == "OnEnter":
@@ -17,19 +17,19 @@ def main():
         elif bpType == "OnRet":
             size = pygdb.globals["calloc_size"]
             addr = pygdb.get_reg("rax")
-            print "calloc(0x%x) = 0x%x"%(size, addr)
+            print("*"*0x20)
+            print("calloc(0x%x) = 0x%x"%(size, addr))
             pygdb.heapinfo()
-            print "*"*0x20
             #raw_input(":")
 
     def hook_free(pygdb, bpType):
         if bpType == "OnEnter":
             addr = pygdb.get_reg("rdi")
-            print "free(0x%x)"%(addr)
+            print("*"*0x20)
+            print("free(0x%x)"%(addr))
         elif bpType == "OnRet":
-            print "free over"
+            print("free over")
             pygdb.heapinfo()
-            print "*"*0x20
 
     binary_path = "note"
     pygdb = PyGDB(target = binary_path)
@@ -39,7 +39,7 @@ def main():
     pygdb.attach_name(binary_path, 0)
     pygdb.setHeapFilter("fastbin|tcache|unsortbin")
     data = pygdb.execute("print &main_arena")
-    print "data:", repr(data)
+    print("data:", repr(data)
 
     calloc_offset = 0x81a50
     calloc_ret_offset = 0x81C3D
@@ -47,15 +47,15 @@ def main():
 
     __libc_calloc_addr = calloc_offset + pygdb.libc()
     malloc_addr = malloc_offset + pygdb.libc()
-    print "malloc_addr:", hex(malloc_addr)
-    print "__libc_calloc:", hex(__libc_calloc_addr)
+    print("malloc_addr:", hex(malloc_addr))
+    print("__libc_calloc:", hex(__libc_calloc_addr))
 
     __libc_calloc_addr_ret = calloc_ret_offset + pygdb.libc()
     malloc_addr_ret = pygdb.find_ret(malloc_addr)
-    print "__libc_calloc_ret:", hex(__libc_calloc_addr_ret)
-    print "malloc_addr_ret:", hex(malloc_addr_ret)
+    print("__libc_calloc_ret:", hex(__libc_calloc_addr_ret))
+    print(("malloc_addr_ret:", hex(malloc_addr_ret))
     free_addr_ret = pygdb.find_ret("__libc_free")
-    print "free_addr_ret:", hex(free_addr_ret)
+    print("free_addr_ret:", hex(free_addr_ret))
 
     pygdb.hook("__libc_free", hook_free, [], hook_ret = 0x7d20e+pygdb.libc())
     pygdb.hook(malloc_addr, hook_malloc, [], hook_ret = False)

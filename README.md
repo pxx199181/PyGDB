@@ -31,103 +31,16 @@ You need to install pwntools first.
 git clone https://github.com/pxx199181/PyGDB/
 
 `python setup.py install`
+
+
+# ctf-example
+path: example/ctf-example
+1. macos_xor
+2. qwb_final_2019_nvram
+
 # Usage
-## Template
-Template for quick scripting.
-```python
-from PyGDB import PyGDB
-
-def test():
-    target = "/bin/ls"
-    pygdb = PyGDB(target)
-    pygdb.start()
-
-    print pygdb.get_regs()
-    print pygdb.get_code()
-    print pygdb.get_stack()
-    rsp = pygdb.get_reg("rsp")
-    print pygdb.get_mem(rsp, 0x20)
-    print pygdb.hexdump(rsp, 0x20)
-
-    print pygdb.get_bp()
-
-    pygdb.interact()
-
-def main():
-    #test()
-    def hook_malloc(pygdb, bpType):
-        if bpType == "OnEnter":
-            pygdb.globals["malloc_size"] = pygdb.get_reg("rdi")
-        elif bpType == "OnRet":
-            size = pygdb.globals["malloc_size"]
-            addr = pygdb.get_reg("rax")
-            print "malloc(0x%x) = 0x%x"%(size, addr)
-            pygdb.heapinfo()
-            print "*"*0x20
-    
-    def hook_calloc(pygdb, bpType):
-        if bpType == "OnEnter":
-            pygdb.globals["calloc_size"] = pygdb.get_reg("rsi")
-        elif bpType == "OnRet":
-            size = pygdb.globals["calloc_size"]
-            addr = pygdb.get_reg("rax")
-            print "calloc(0x%x) = 0x%x"%(size, addr)
-            pygdb.heapinfo()
-            print "*"*0x20
-            #raw_input(":")
-
-    def hook_free(pygdb, bpType):
-        if bpType == "OnEnter":
-            addr = pygdb.get_reg("rdi")
-            print "free(0x%x)"%(addr)
-        elif bpType == "OnRet":
-            print "free over"
-            pygdb.heapinfo()
-            print "*"*0x20
-
-    binary_path = "note"
-    pygdb = PyGDB(target = binary_path)
-    #pygdb.attach_name(target, 0)
-    #pygdb.attach("ip:port")
-    #pygdb.attach(pid)
-    pygdb.attach_name(binary_path, 0)
-    pygdb.setHeapFilter("fastbin|tcache|unsortbin")
-    data = pygdb.execute("print &main_arena")
-    print "data:", repr(data)
-
-    calloc_offset = 0x81a50
-    calloc_ret_offset = 0x81C3D
-    malloc_offset = 0x80c40
-
-    __libc_calloc_addr = calloc_offset + pygdb.libc()
-    malloc_addr = malloc_offset + pygdb.libc()
-    print "malloc_addr:", hex(malloc_addr)
-    print "__libc_calloc:", hex(__libc_calloc_addr)
-
-    __libc_calloc_addr_ret = calloc_ret_offset + pygdb.libc()
-    malloc_addr_ret = pygdb.find_ret(malloc_addr)
-    print "__libc_calloc_ret:", hex(__libc_calloc_addr_ret)
-    print "malloc_addr_ret:", hex(malloc_addr_ret)
-    free_addr_ret = pygdb.find_ret("__libc_free")
-    print "free_addr_ret:", hex(free_addr_ret)
-
-    pygdb.hook("__libc_free", hook_free, [], hook_ret = 0x7d20e+pygdb.libc())
-    pygdb.hook(malloc_addr, hook_malloc, [], hook_ret = False)
-    pygdb.hook(__libc_calloc_addr, hook_calloc, [], hook_ret = __libc_calloc_addr_ret)
-
-    #pygdb.remove_hook(malloc_addr)
-    #pygdb.remove_hook("__libc_free")
-    #pygdb.interact()
-    pygdb.Continue()
-    
-    pygdb.interact()
-
-if __name__ == "__main__":
-    main()
-```
-## Basic
-test script
-
+## Example
+Example for quick scripting.
 ```python
 from PyGDB import PyGDB
 from pwn import *
@@ -155,7 +68,7 @@ def test_intel():
 	data = pygdb.get_mem(0x8048621, 20)
 	#print("data:", data)
 	for v in data:
-		print(ord(v), type(v))
+		print(v, type(v))
 
 	print(pygdb.set_mem(0x8048621, "\x01"*0x10))
 	data = pygdb.get_mem(0x8048621, 20)
@@ -332,7 +245,7 @@ def test_mmap():
 	code_data = pygdb.gen_payload(c_source, "upper_str")#, obj_name = "uuu_obj")
 	code_addr = 0x8304000
 	data_addr = 0x8300000
-	#print data.encode("hex")
+	#print(data).encode("hex")
 
 
 	map_config = {
@@ -350,11 +263,11 @@ def test_mmap():
 	args = [data_addr, 0x20]
 
 	code_asm = pygdb.get_code(code_addr, 0x100)
-	print "code_asm:"
-	print code_asm
+	print("code_asm:")
+	print(code_asm)
 	code_asm = pygdb.get_code(0x830417e, 0x50)
-	print "code_asm:"
-	print code_asm
+	print("code_asm:")
+	print(code_asm)
 	
 	def hook_count(pygdb, bpType, id, addr, value):
 		#rdi = pygdb.
@@ -364,18 +277,18 @@ def test_mmap():
 				pygdb.remove_hook(addr)
 				del pygdb.globals["count"]
 				return
-			print "count", pygdb.globals["count"]
+			print("count", pygdb.globals["count"])
 
 	pygdb.globals["count"] = 0
 	#pygdb.hook(0x8304029, hook_count, [pygdb, 0, 0x8304029, "call 0x8304029",])
 
 	#pygdb.set_bp(code_addr)
 	ret_v = pygdb.call(code_addr, args)
-	print "ret_v:", repr(ret_v), type(ret_v)
-	print pygdb.globals
+	print("ret_v:", repr(ret_v), type(ret_v))
+	print(pygdb.globals)
 
 	str_info = pygdb.readString(data_addr)
-	print str_info
+	print(str_info)
 	return
 
 def test_patch():
@@ -414,18 +327,24 @@ def test_dup_io():
 	def hook(pygdb, bpType):
 		if bpType == "OnEnter":
 			data = pygdb.get_regs()
-			print data
+			print(data)
 			data = pygdb.get_code(count = 10)
-			print data
+			print(data)
 			data = pygdb.get_stack(count = 20)
-			print data
+			print(data)
 
 	pygdb = PyGDB(target = "./test_dup_io")
 	b_id, _ = pygdb.set_bp("main")
 	pygdb.run()
 	pygdb.del_bp(b_id)
 
-	pygdb.dup_io(port = 12345, new_terminal = True)
+	mode = raw_input("static?(1:yes, 0:no)").strip()
+	if mode == "1":
+		pygdb.dup_io_static(port = 12345, new_terminal = True, fd_list = [0])
+		pygdb.dup_io_static(port = 12346, new_terminal = True, fd_list = [1,2])
+	else:
+		pygdb.dup_io(port = 12345, new_terminal = True, fd_list = [0])
+		pygdb.dup_io(port = 12346, new_terminal = True, fd_list = [1,2])
 	#pygdb.dup_io(port = 12345, new_terminal = False)
 	pygdb.hook(0x400883, hook, [])
 	pygdb.Continue()
@@ -582,7 +501,7 @@ def test_inject():
 	code_data = pygdb.gen_payload(c_source, "main_logic_function")#, obj_name = "uuu_obj")
 	code_addr = 0x8304000
 	data_addr = 0x8300000
-	#print data.encode("hex")
+	#print(data).encode("hex")
 
 	map_config = {
 		data_addr:[0x1000, "rw"],
@@ -613,13 +532,19 @@ def test_inject():
 	return
 
 def test_inject_hook():
+	
 	pygdb = PyGDB(target = "./test_hook")
+	#pygdb.hook(0x40054d, hook_test, [0, 0x40054d, "call printf",])
+	#pygdb.hook(0x400552, hook_out, [0, 0x400552, "cmp",])
+
 	pygdb.start()
 
-	pygdb.setvbuf0()
-	pygdb.dup_io(port = 12345, new_terminal = True)
-	import time
-	time.sleep(2)
+	#pygdb.interact()
+	#pygdb.setvbuf0()
+	#pygdb.dup_io(port = 12346, new_terminal = True)
+	#pygdb.dup_io(port = 12346, new_terminal = False)
+	#import time
+	#time.sleep(2)
 
 	code_addr = 0x8304000
 	data_addr = 0x8300000
@@ -629,6 +554,9 @@ def test_inject_hook():
 	}
 
 	pygdb.init_map_config(map_config)
+
+	#pygdb.core_inject_init()
+	#pygdb.interact()
 
 	globals_map = {}
 	bin_elf = ELF("./test_hook")
@@ -653,21 +581,55 @@ def test_inject_hook():
 	message_data = "inject_hook\n\x00"
 	data_addr = pygdb.inject_hook_alloc(message_data)
 	asm_code = """
-	push rdi
-	push rsi
 	mov rdi, 0x%x
 	call printf
-	pop rsi
-	pop rdi
 	"""%(data_addr)
-	pygdb.inject_hook(0x40054d, asm_code)#, show = True)
+	pygdb.inject_hook_asm(0x40054d, asm_code, show = False)
+
+	#pygdb.core_inject_hook_func(0x40055A, "show_context", show = True)
+	#pygdb.set_bp(0x40055A, temp = True, thread_id = True)
+	#pygdb.interact()
+
+	#code = pygdb._asm_("mov rdi, 0x0")
+	#pygdb.inject_hook_code(0x40054d, code, show = True)
 	
-	asm_code = "nop"
-	pygdb.inject_hook(0x40055A, asm_code)
+	c_source = """
+#include "pygdb.h"
+#include <stdio.h>
+void show_context(context* ctx) {
+	printf("in context\\n");
+	printf("rax: 0x%llx\\n", ctx->rax);
+	printf("rbx: 0x%llx\\n", ctx->rbx);
+	printf("rcx: 0x%llx\\n", ctx->rcx);
+	printf("hook addr: 0x%llx\\n", ctx->rip);
+	printf("hook rsp: 0x%llx\\n", ctx->rsp);
+}
+	"""
+	#plt_maps = pygdb.load_source_lib(c_source, obj_name = "inject_hook.so")
+	plt_maps = pygdb.load_cfile_lib("inject_hook.c", obj_name = "inject_hook.so")
+	print("plt_maps:", plt_maps)
+	pygdb.inject_hook_func(0x40055A, "show_context", show = False)
+
+	print("inject_hook dup_io")
+	print("core_dup_io: 12345, run nc 0 12345\n");
+	pygdb.inject_hook(0x40052e, "dup_io", show = False)
+	print("inject_hook dup_io over")
 
 	pygdb.inject_patch_asm(0x4004ED, "nop")
 
+	#pygdb.set_bp(0x40055A, temp = True, thread_id = True)
+	#pygdb.Continue()
+	#pygdb.interact()
+
+	pygdb.set_bp(0x40055A)
+	#pygdb.interact()
+	for i in range(5):
+		pygdb.Continue()
+	#pygdb.interact()
+	pygdb.interact_pygdb()
+	
 	pygdb.run_until(0x400562)
+	pygdb.interact()
 
 	if choice == "1":
 		pygdb.inject_into_file("./test_hook", "./test_hook_p", base = 0x400000)
@@ -682,6 +644,7 @@ def test_inject_hook():
 	print("")
 	print("after remove_inject_hook")
 	pygdb.show_inject_info()
+
 
 	pygdb.inject_hook_free(data_addr, len(message_data))
 	print("")
@@ -701,6 +664,7 @@ def test_inject_hook():
 	print("stage 2")
 	pygdb.set_reg("pc", 0x0400526)
 	pygdb.run_until(0x400562)
+
 	pygdb.interact()
 
 def test_fd():
@@ -741,13 +705,13 @@ def test_fd():
 import sys
 if __name__ == "__main__":
 	if len(sys.argv) < 2:
-		print "useage:"
-		print "\t python test_pygdb.py intel/arm/hook/mmap/patch/dup_io/trace/catch/inject/inject_hook"
+		print("useage:")
+		print("\t python test_pygdb.py intel/arm/hook/mmap/patch/dup_io/trace/catch/inject/inject_hook")
 	else:
 		if sys.argv[1] == "intel":
 			test_intel()
 		elif sys.argv[1] == "arm":
-			print "please run ./run_arm.sh first"
+			print("please run ./run_arm.sh first")
 			test_arm()
 		elif sys.argv[1] == "hook":
 			test_hook()
@@ -910,4 +874,9 @@ TODO
 - (1). add c func hook support
 - (2). add inject_hook_func / inject_hook_asm
 - (3). remove some bugs
+
+## 2023/11/17 Version 1.0.0
+- (1). add python3 support
+- (2). update all example to support python3
+- (3). need peda/pwntools
 

@@ -1,4 +1,8 @@
-import mf_angelheap
+try:
+	import PyGDB.mf_angelheap as mf_angelheap
+except Exception as e:
+	import mf_angelheap
+
 import traceback
 try:
 	from pwn import *
@@ -22,16 +26,53 @@ import re
 import threading
 import string
 import sys
-import commands
 import socket
 import hashlib
 
-reload(sys)
-sys.setdefaultencoding('utf-8')
-import commands
-def do_command(cmd_line):
-	(status, output) = commands.getstatusoutput(cmd_line)
-	return output
+python_version = sys.version_info.major
+
+PYGDB_decode_hex = None
+PYGDB_encode_hex = None
+do_command = None
+
+if python_version == 2:
+	import commands
+	def do_command_imp(cmd_line):
+		(status, output) = commands.getstatusoutput(cmd_line)
+		return output
+	do_command = do_command_imp
+	reload(sys)
+	sys.setdefaultencoding('utf-8')
+
+	def decode_hex_imp(data):
+		return data.decode("hex")
+	PYGDB_decode_hex = decode_hex_imp
+
+	def encode_hex_imp(data):
+		return data.encode("hex")
+	PYGDB_encode_hex = encode_hex_imp
+
+elif python_version == 3:
+	import subprocess
+	def do_command_imp(cmd_line):
+		try:
+			output = subprocess.check_output(cmd_line, shell = True)
+			return output.decode()
+		except Exception as e:
+			return ''
+	do_command = do_command_imp
+
+	def decode_hex_imp(data):
+		return bytes.fromhex(data)
+	PYGDB_decode_hex = decode_hex_imp
+
+	def encode_hex_imp(data):
+		if type(data) == bytes:
+			return data.hex()
+		else:
+			return data.encode().hex()
+	PYGDB_encode_hex = encode_hex_imp
+
 
 def split_multi(data, spec):
 	items = []
@@ -44,17 +85,27 @@ def split_multi(data, spec):
 def encode_unicode(data):
 	return "".join(chr(ord(c)&0xff) for c in data)
 
+def str2bytes(data):
+	if python_version == 2:
+		return data
+	elif type(data) == bytes:
+		return data
+	else:
+		return bytes([ord(c)&0xff for c in data])
+
 def byteify(input, encoding='utf-8'):
-	if isinstance(input, dict):
-		return {byteify(key): byteify(value) for key, value in input.iteritems()}
-	elif isinstance(input, list):
-		return [byteify(element) for element in input]
-	elif isinstance(input, unicode):
-		#return input.encode(encoding)
-		return encode_unicode(input)
+	if python_version == 2:
+		if isinstance(input, dict):
+			return {byteify(key): byteify(value) for key, value in input.iteritems()}
+		elif isinstance(input, list):
+			return [byteify(element) for element in input]
+		elif isinstance(input, unicode):
+			#return input.encode(encoding)
+			return encode_unicode(input)
+		else:
+			return input
 	else:
 		return input
-
 
 def to_int(val):
 	"""
@@ -91,17 +142,22 @@ def PyGDB_hexdump(data, addr = 0, show = True, width = 16):
 	all_info = ""
 	half_width = width / 2
 
-	for i in range(len(data)):
+	data = str2bytes(data)
+	if python_version == 2:
+		data_v = [ord(c) for c in data]
+	else:
+		data_v = data
+	for i in range(len(data_v)):
 		if i % width == 0:
 			all_info += "0x%08x: "%(i + addr)
 
-		line_info += "%02x "%ord(data[i])
+		line_info += "%02x "%(data_v[i])
 
 		if i%half_width == half_width-1:
 			line_info += " "
 
-		if data[i] in alpha_bet_printable:
-			ascii_info += data[i]
+		if chr(data_v[i]) in alpha_bet_printable:
+			ascii_info += chr(data_v[i])
 		else:
 			ascii_info += "."
 
@@ -123,7 +179,10 @@ def PyGDB_hexdump(data, addr = 0, show = True, width = 16):
 
 
 def PyGDB_unhexdump(data, width = 16):
-	final_data = ""
+	if python_version == 2:
+		final_data = ""
+	else:
+		final_data = b""
 	for line in data.split("\n"):
 		if ": " in line:
 			line = line[line.index(": ") + 2:]
@@ -136,7 +195,7 @@ def PyGDB_unhexdump(data, width = 16):
 			continue
 
 		line = line[:width*3+1]
-		final_data += line.replace(" ", "").decode("hex")
+		final_data += PYGDB_decode_hex(line.replace(" ", ""))
 
 	return final_data
 
@@ -145,6 +204,11 @@ def PyGDB_readfile(filename, mode = "rb"):
 		return fd.read()
 
 def PyGDB_writefile(filename, data, mode = "wb"):
+	if python_version == 2:
+		pass
+	else:
+		if type(data) == str:
+			data = str2bytes(data)
 	with open(filename, mode) as fd:
 		return fd.write(data)
 
@@ -247,7 +311,7 @@ class PyGDB():
 		self.core_pygdb_maps = {}
 
 		self.target_argv = ""
-		if type(args) == str:
+		if type(args) in [str, bytes]:
 			args = args.split(" ")
 		self.target_args = args
 
@@ -405,9 +469,7 @@ class PyGDB():
 		#print(self.target_args)
 		#self.interact()
 		self.set_args(self.target_args)
-
-		
-		print("gdb pid", pids)
+		#print("gdb pid", pids)
 		self.gdb_pid = pids[0]
 
 	def init_gdb(self):
@@ -416,7 +478,7 @@ class PyGDB():
 
 	def attach(self, target):
 		self.is_local = False
-		if type(target) == str:
+		if type(target) in [str, bytes]:
 			if ":" in target:
 				#self.do_gdb("file")
 				self.do_gdb_ret("target remote %s"%target)
@@ -431,7 +493,7 @@ class PyGDB():
 			self.target_argv = "attach %d"%target
 
 	def set_args(self, args):
-		if type(args) == str:
+		if type(args) in [str, bytes]:
 			args = args.split(" ")
 		self.target_args = args
 		self.do_gdb_ret("set args %s"%(" ".join(self.target_args)))
@@ -473,7 +535,7 @@ class PyGDB():
 		self.is_local = True
 		cmdline = "run"
 		if args is not None:
-			if type(args) == str:
+			if type(args) in [str, bytes]:
 				cmdline += " " + args
 			else:
 				cmdline += " " + " ".join(args)
@@ -494,43 +556,69 @@ class PyGDB():
 	def do_pygdb_trim(self):
 		begin_s = "pyCmd-B{"
 		end_s = "}pyCmd-E"
-		#self.io.recvuntil(begin_s)
-		#data = self.io.recvuntil("}pyCmd-E", drop = True)
+		
+		if python_version == 3:
+			begin_s = begin_s.encode()
+			end_s = end_s.encode()
+		#self.io_recvuntil(begin_s)
+		#data = self.io_recvuntil("}pyCmd-E", drop = True)
 		while True:
-			data = self.io.recvuntil(end_s)
+			data = self.io_recvuntil(end_s)
 			pos = data.rfind(begin_s)
 			if pos != -1:
 				#print "data:", data
 				data = data[pos + len(begin_s):-len(end_s)]
 				break
+
+	def io_sendline(self, data):
+		if python_version == 2:
+			return self.io.sendline(data)
+		else:
+			return self.io.sendline(data.encode())
+
+	def io_send(self, data):
+		if python_version == 2:
+			return self.io.send(data)
+		else:
+			return self.io.send(data.encode())
+
+	def io_recvuntil(self, data):
+		if python_version == 2:
+			return self.io.recvuntil(data)
+		else:
+			return self.io.recvuntil(data.encode()).decode()
+
 			 
 	def do_pygdb_ret(self, cmdline):
-		self.io.sendline("pyCmdRet %s"%cmdline)
-
-		#print "cmdline:->", cmdline, "<>"
+		self.io_sendline("pyCmdRet %s"%cmdline)
+		#print("cmdline:->", cmdline, "<>")
+		#self.io.interactive()
 
 		begin_s = "pyCmd-B{"
 		end_s = "}pyCmd-E"
-		#self.io.recvuntil(begin_s)
-		#data = self.io.recvuntil("}pyCmd-E", drop = True)
+
+		#self.io_recvuntil(begin_s)
+		#data = self.io_recvuntil("}pyCmd-E", drop = True)
 		while True:
-			data = self.io.recvuntil(end_s)
+			data = self.io_recvuntil(end_s)
 			pos = data.rfind(begin_s)
 			if pos != -1:
-				#print "data:<begin>", data, "<end>"
+				#print("data:<begin>", data, "<end>")
 				data = data[pos + len(begin_s):-len(end_s)]
 				break
-		data = data.decode("hex")
-		#print "decode:->", data, "<>"
-		if data == '':
+		data = PYGDB_decode_hex(data)
+		#print("decode:->", data, "<>")
+		if len(data) == 0:
 			return ''
 		value = json.loads(data)
 		value = value["data"]
+		#print(value)
 		value = byteify(value)
+		#print(value)
 		return value
 
 	def do_pygdb(self, cmdline):
-		self.io.sendline("pyCmd %s"%cmdline)
+		self.io_sendline("pyCmd %s"%cmdline)
 
 	def do_gdb_ret(self, cmdline):
 		return self.do_pygdb_ret("gdb_cmd " + cmdline)
@@ -717,10 +805,18 @@ class PyGDB():
 		return self.do_pygdb_ret("get_stack %s"%(cmdline))
 
 	def get_mem(self, addr, size):
-		return self.do_pygdb_ret("read_mem 0x%x 0x%x"%(addr, size))
+		#print("addr:", addr)
+		#print("size:", size)
+		addr = int(addr)
+		data = self.do_pygdb_ret("read_mem 0x%x 0x%x"%(addr, int(size)))
+		if python_version == 2:
+			return data
+		else:
+			return str2bytes(data)		
 
 	def set_mem(self, addr, data):
-		return self.do_pygdb_ret("write_mem 0x%x 0x%s"%(addr, data[::-1].encode("hex")))
+		addr = int(addr)
+		return self.do_pygdb_ret("write_mem 0x%x 0x%s"%(addr, PYGDB_encode_hex(data[::-1])))
 
 	def stepi(self, count = None):
 		cmdline = ""
@@ -773,17 +869,17 @@ class PyGDB():
 		else:
 			self.detach()
 
-	def interact(self, prompt = "~> ", simple = True):
+	def interact(self, prompt = "~> ", is_peda = True):
 		self.do_pygdb("set_interact_mode 1")
 		print('[+] ' + 'Switching to interactive mode')
-		self.io.sendline("source ~/.gdbinit")
+		self.io_sendline("source ~/.gdbinit")
 
-		prompt = term.text.bold_red(prompt)
-		self.io.sendline("set prompt %s" % (prompt))
+		if is_peda == True:
+			prompt = term.text.bold_red(prompt)
+			self.io_sendline("set prompt %s" % (prompt))
+			self.io_recvuntil(prompt)
 
-		if simple == True:
-			self.io.recvuntil(prompt)
-			self.io.sendline("context")
+		self.io_sendline("context")
 
 		if io_wrapper == "zio":
 			self.io.interact()
@@ -795,7 +891,10 @@ class PyGDB():
 				try:
 					cur = self.io.recv(timeout = 0.05)
 					#cur = self.io.read_until_timeout(timeout = 0.05)
-					cur = cur.replace('\r\n', '\n')
+					if python_version == 2:
+						cur = cur.replace('\r\n', '\n')
+					else:
+						cur = cur.replace(b'\r\n', b'\n')
 					if cur:
 						sys.stdout.write(cur)
 						sys.stdout.flush()
@@ -819,20 +918,35 @@ class PyGDB():
 			try:
 				while not go.isSet():
 					#data_all = raw_input(" "*len(prompt))
-					data_all = ""
-					while True:
-						data = sys.stdin.read(1)
-						if data == '\x7f':
-							sys.stdout.write("\r" + ' '*len(prompt + data_all))
-							data_all = data_all[:-1]
-							sys.stdout.write("\r" + prompt + data_all)
-						else:
-							data_all += data
-							sys.stdout.write(data)						
-						if data == '\n':
-							break
+					if python_version == 2:
+						data_all = ""
+						while True:
+							data = sys.stdin.read(1)
+							if data == '\x7f':
+								sys.stdout.write("\r" + ' '*len(prompt + data_all))
+								data_all = data_all[:-1]
+								sys.stdout.write("\r" + prompt + data_all)
+							else:
+								data_all += data
+								sys.stdout.write(data)						
+							if data == '\n':
+								break
+					else:
+						data_all = ""
+						while True:
+							data = sys.stdin.read(1)
+							if data == '\x7f':
+								sys.stdout.write("\r" + ' '*len(prompt + data_all))
+								data_all = data_all[:-1]
+								sys.stdout.write("\r" + prompt + data_all)
+							else:
+								data_all += data
+								sys.stdout.write(data)						
+							if data == '\n':
+								break
+
 					try:
-						self.io.send(data_all)
+						self.io_send(data_all)
 					except EOFError:
 						go.set()
 						print('[+] ' + 'Got EOF while sending in interactive')
@@ -863,7 +977,7 @@ class PyGDB():
 		split_str = "-"*split_len
 		print("[%scode%s]"%(split_str, split_str))
 		codeInfo = self.get_code(count = count)
-		if type(codeInfo) == str:
+		if type(codeInfo) in [str, bytes]:
 			print(codeInfo)
 
 
@@ -873,7 +987,7 @@ class PyGDB():
 		cur_sp = self.get_reg("sp")
 		if type(cur_sp) != str:
 			stackInfo = self.get_stack(cur_sp, count)
-			if type(stackInfo) == str:
+			if type(stackInfo) in [str, bytes]:
 				print(stackInfo)
 
 	def show_context(self, count = 8, split_len = 0x20):
@@ -890,7 +1004,11 @@ class PyGDB():
 		while True:
 			try:
 				cont_sign = False
-				data = raw_input(prompt).strip()
+				if python_version == 2:
+					data = raw_input(prompt).strip()
+				else:
+					data = input(prompt).strip()
+
 				if len(data) == 0:
 					data = last_data
 				if len(data) == 0:
@@ -1038,7 +1156,15 @@ class PyGDB():
 			exe_name = binary_name[b_pos + 1:]
 		else:
 			exe_name = binary_name
-		data = do_command("pidof %s"%exe_name).split(" ")[idx]
+		data = do_command("pidof %s"%exe_name).strip()
+		if len(data) == 0:
+			print("process %s not exist, please run it"%binary_name)
+			exit(0)
+		if idx >= len(data.split(" ")):
+			print("process %s[%d] not exist"%(binary_name, idx))
+			exit(0)
+
+		data = data.split(" ")[idx].strip()
 		#print("data:", data)
 		pid = int(data)
 		self.attach(pid)
@@ -1051,21 +1177,22 @@ class PyGDB():
 		return self.set_mem(addr, data)
 
 	def read_string_list(self, addr, count = 1):
-	    data = self.execute("x/%ds 0x%x"%(count, addr)).strip()
-	    result = []
-	    for line in data.split("\n"):
-	    	if ":" not in line:
-	    		continue
-	        line = ":".join(line.split(":")[1:]).strip()
-	        result.append(line[1:-1])
-	    return result
+		data = self.execute("x/%ds 0x%x"%(count, addr)).strip()
+		result = []
+		for line in data.split("\n"):
+			if ":" not in line:
+				continue
+			print(line)
+			line = ":".join(line.split(":")[1:]).strip()
+			result.append(line[1:-1])
+		return result
 
 	def read_string(self, addr, count = 1):
-	    result = self.read_string_list(addr, 1)
-	    if len(result) >= 1:
-	    	return result[0]
-	    else:
-	    	return ""
+		result = self.read_string_list(addr, 1)
+		if len(result) >= 1:
+			return result[0]
+		else:
+			return ""
 
 	def read_byte(self, addr):
 		return u8(self.read_mem(addr, 1))
@@ -1077,6 +1204,8 @@ class PyGDB():
 		return u32(self.read_mem(addr, 4), endian = endian)
 
 	def read_long(self, addr, endian = "little"):
+		data = self.read_mem(addr, 8)
+		print("data:", repr(data))
 		return u64(self.read_mem(addr, 8), endian = endian)
 
 	def read_pointer(self, addr, endian = "little"):
@@ -1105,6 +1234,7 @@ class PyGDB():
 		self.write_mem(addr, p64(value, endian = endian))
 
 	def _read_mid_list(self, addr, count, bc = 4, endian = "little"):
+		addr = int(addr)
 		f_i = {}
 		f_i[1] = u8
 		f_i[2] = u16
@@ -1116,7 +1246,7 @@ class PyGDB():
 		data = self.read_mem(addr, count*bc)
 		#print len(data)
 		#print data.encode("hex")
-		result = map(u_f, [data[i*bc:(i+1)*bc] for i in range(len(data)/bc)])
+		result = list(map(u_f, [data[int(i*bc):int((i+1)*bc)] for i in range(int(len(data)/bc))]))
 		return result
 
 	def read_byte_list(self, addr, count):
@@ -1132,6 +1262,7 @@ class PyGDB():
 		return self._read_mid_list(addr, count, 8)
 
 	def _write_mid_list(self, addr, data_list, bc = 4, endian = "little"):
+		addr = int(addr)
 		f_i = {}
 		f_i[1] = p8
 		f_i[2] = p16
@@ -1139,8 +1270,11 @@ class PyGDB():
 		f_i[8] = p64
 		#u_f = f_i[bc]
 		u_f = lambda x, endian='little':f_i[bc](x, endian = endian)
-		result = map(u_f, data_list)
-		self.write_mem(addr, "".join(result))
+		result = list(map(u_f, data_list))
+		if python_version == 2:
+			self.write_mem(addr, "".join(result))
+		else:
+			self.write_mem(addr, b"".join(result))
 		
 	def write_byte_list(self, addr, data_list):
 		return self._write_mid_list(addr, data_list, 1)
@@ -1488,14 +1622,19 @@ class PyGDB():
 
 
 	def readString(self, addr):
-		final_data = ""
+		if python_version == 2:
+			final_data = ""
+			zero_data = "\x00"
+		else:
+			final_data = b""
+			zero_data = b"\x00"
 		while True:
 			data = self.read_mem(addr+len(final_data), 0x100)
-			pos = data.find("\x00")
+			pos = data.find(zero_data)
 			if pos != -1:
 				final_data += data[:pos]
 				break
-			if data is None or data == "":
+			if data is None or len(data) == 0:
 				break
 			final_data += data
 
@@ -1517,6 +1656,7 @@ class PyGDB():
 
 		shellcode_asm = shellcraft.mmap(addr, size, prot, 0x22, -1, 0)
 		shellcode = self._asm_(shellcode_asm)
+		#print("shellcode:", type(shellcode), shellcode)
 
 		pc = self.get_reg("pc")
 		old_data = self.read_mem(pc, len(shellcode))
@@ -1576,7 +1716,7 @@ class PyGDB():
 		"""
 		for addr in data_config.keys():
 			value = data_config[addr]
-			if type(value) == str:
+			if type(value) == str or type(value) == bytes:
 				data = value
 			elif len(value) == 1:
 				data = value[0]
@@ -1658,7 +1798,7 @@ class PyGDB():
 		"""
 		args = [arg0, arg1, arg2, ...]
 		"""
-
+		#print(args)
 		#print("call enter")
 		#print(self.get_code(6))
 
@@ -1673,7 +1813,7 @@ class PyGDB():
 		elif type(debug_list) != list:
 			debug_list = [debug_list]
 
-		if type(func) == str:
+		if type(func) in [str, bytes]:
 			if lib_path is not None:
 				func_addr = self.get_lib_symbol(func, lib_path)
 			else:
@@ -1692,7 +1832,7 @@ class PyGDB():
 		#print("pc-0", hex(self.get_reg("pc")), use_addr)
 		args_new = []
 		for item in args:
-			if type(item) == str:
+			if type(item) in [str, bytes]:
 				sp -= len(item)
 				args_new.append(sp)
 				self.write_mem(sp, item)
@@ -1808,6 +1948,7 @@ class PyGDB():
 				less_count = 6 if (len(args) > 6) else len(args)
 
 				for i in range(less_count):
+					#print("args[i]", type(args[i]), reg_names[i], args[i])
 					self.set_reg(reg_names[i], args[i])
 
 				if len(args) > 6:
@@ -1862,10 +2003,12 @@ class PyGDB():
 			self.interact()
 
 		#self.del_bp(bp_num)
-		if old_data != "":
+		if len(old_data) != 0:
 			nop_step_sz = len(nop_step_data)
 
 			#print(hex(use_addr), hex(nop_step_sz))
+			#print("nop_step_data:", type(nop_step_data))
+			#print("old_data[nop_step_sz:]:", type(old_data[nop_step_sz:]))
 			self.write_mem(use_addr-nop_step_sz, nop_step_data + old_data[nop_step_sz:])
 			self.set_reg("pc", use_addr-nop_step_sz)
 			self.stepi()
@@ -1944,7 +2087,7 @@ class PyGDB():
 				if len(items) == 2:
 					items = items + [True, lib_path]
 				elif len(items) == 3:
-					if type(items[2]) == str:
+					if type(items[2]) in [str, bytes]:
 						items = items[:-1] + [True, items[-1]]
 					else:
 						items = items + [lib_path]
@@ -2025,10 +2168,11 @@ class PyGDB():
 		if pid == 0:
 			# Closing the file descriptors makes everything fail under tmux on OSX.
 			if platform.system() != 'Darwin':
-				devnull = open(os.devnull, 'rwb')
-				os.dup2(devnull.fileno(), 0)
-				os.dup2(devnull.fileno(), 1)
-				os.dup2(devnull.fileno(), 2)
+				devnull_r = open(os.devnull, 'rb')
+				devnull_w = open(os.devnull, 'wb')
+				os.dup2(devnull_r.fileno(), 0)
+				os.dup2(devnull_w.fileno(), 1)
+				os.dup2(devnull_w.fileno(), 2)
 			sleep(sleep_time)
 			os.execv(argv[0], argv)
 			os._exit(1)
@@ -2052,8 +2196,10 @@ class PyGDB():
 		Lewis.sin_addr.s_addr = inet_addr(ip);
 		memset(Lewis.sin_zero,0,sizeof(Lewis.sin_zero));
 		"""
-
-		sockaddr_in = ""
+		if python_version == 2:
+			sockaddr_in = ""
+		else:
+			sockaddr_in = b""
 		sockaddr_in += p16(2)
 		sockaddr_in += p16(port, endian = 'big')
 		sockaddr_in += self.pack_ip4(ip)
@@ -2111,7 +2257,7 @@ class PyGDB():
 
 		args_new = []
 		for item in args:
-			if type(item) == str:
+			if type(item) in [str, bytes]:
 				sp -= len(item)
 				args_new.append(sp)
 				self.write_mem(sp, item)
@@ -2148,7 +2294,7 @@ class PyGDB():
 		if need_parse:
 			args_new = []
 			for item in args:
-				if type(item) == str:
+				if type(item) in [str, bytes]:
 					sp -= len(item)
 					args_new.append(sp)
 					self.write_mem(sp, item)
@@ -2195,7 +2341,7 @@ class PyGDB():
 		self.write_mem(pc, shellcode)
 
 		self.run_until(pc + len(shellcode))
-		if old_data != "":
+		if len(old_data) != 0:
 			nop_step_sz = len(nop_step_data)
 			self.write_mem(pc-nop_step_sz, nop_step_data + old_data[nop_step_sz:])
 			self.set_reg("pc", pc-nop_step_sz)
@@ -2208,11 +2354,16 @@ class PyGDB():
 	def parse_ip4(self, ip):
 		data_list = []
 		for item in ip:
-			data_list.append(str(u8(item)))
+			if type(item) == str:
+				item = u8(item)
+			data_list.append(str(item))
 		return ".".join(data_list)
 
 	def pack_ip4(self, ip):
-		data = ""
+		if python_version == 2:
+			data = ""
+		else:
+			data = b""
 		for item in ip.split("."):
 			data += p8(int(item))
 		return data
@@ -2305,7 +2456,7 @@ class PyGDB():
 			#print addr
 			value = patch_config[addr]
 			data = ""
-			if type(value) == str:
+			if type(value) in [str, bytes]:
 				data = value
 				
 			else:
@@ -2336,14 +2487,14 @@ class PyGDB():
 		self.writefile(infile, source)
 		cmdline = "%s %s %s -o %s"%(gcc_path, infile, option, outfile)
 		res = self.run_cmd(cmdline)
-		#print("compile_cmd:", cmdline)
+		print("compile_cmd:", cmdline)
 		if ("error: " not in res.lower()):
 			return True
 		else:
 			print(res)
 			return False
 
-	def gen_payload(self, source_data, gcc_path = "gcc", option = "", obj_name = None):
+	def gen_payload(self, source_data, entry_name, gcc_path = "gcc", option = "", obj_name = None):
 		
 		if io_wrapper == "zio":
 			print("please install pwntools")
@@ -2459,13 +2610,13 @@ class PyGDB():
 
 			#print("func_list:", func_list)
 			#print("sym_count:", sym_count)
-			addr_size = self.bits / 8
+			addr_size = int(self.bits / 8)
 			if sym_count > 0:
 				if plt_base is None:
-					plt_base = self.inject_hook_alloc(sym_count*8, align = True)
+					plt_base = self.inject_hook_alloc(int(sym_count*8), align = True)
 
 				if got_base is None:
-					got_base = self.inject_hook_alloc(sym_count*addr_size, align = True)
+					got_base = self.inject_hook_alloc(int(sym_count*addr_size), align = True)
 
 				if plt_base is None:
 					raise Exception("plt addr error")
@@ -2506,6 +2657,9 @@ class PyGDB():
 			obj_name = "./.PyGDB/%s"%self.hash(source_data)
 			auto_gen = True
 
+		if type(source_data) == bytes: 
+			source_data = source_data.decode()
+
 		func_list = []
 
 		source_data = self.gen_from_syscall(source_data)
@@ -2529,6 +2683,12 @@ class PyGDB():
 
 			source = ""
 			source += source_data
+
+				
+			if python_version == 2:
+				pass
+			else: 
+				source = source.encode()
 			
 			cfile_name = obj_name + ".c"
 			#print source
@@ -2537,6 +2697,7 @@ class PyGDB():
 			#res = self.run_cmd(cmdline)
 			if os.path.exists(obj_name):
 				os.unlink(obj_name)
+
 			res = self.compile_cfile(source, gcc_path, option, cfile_name, obj_name)
 
 			if res == False:
@@ -2568,17 +2729,22 @@ class PyGDB():
 		code_data = asm(code_asm, arch = self.arch, os = "linux")
 		content = ""
 		content += "__asm__ __volatile__(\""
-		content += "".join([".byte 0x%x;"%ord(c) for c in code_data])
+		if python_version == 2:
+			content += "".join([".byte 0x%x;"%ord(c) for c in code_data])
+		else:
+			content += "".join([".byte 0x%x;"%(c) for c in code_data])
 		content += "\"::);"
 		return content
 
 	def gen_stack_value(self, name, value = ""):
 		#print "char %s[%d];"%(n_s, len(name))
+		value = str2bytes(value)
+
 		content = ""
-		for i in range(len(value)/4):
+		for i in range(int(len(value)/4)):
 			content += "*(unsigned int*)(&%s[0x%x]) = 0x%x;\n"%(name, i*4, u32(value[i*4:i*4+4]))
 
-		cur_pos = (len(value)/4)*4
+		cur_pos = int(len(value)/4)*4
 		if len(value) - cur_pos >= 2:
 			content += "*(unsigned short int*)(&%s[0x%x]) = 0x%x;\n"%(name, cur_pos, u16(value[cur_pos:cur_pos+2]))
 			cur_pos += 2
@@ -2617,6 +2783,7 @@ class PyGDB():
 		if offset + len(content) > len(data):
 			print("out of bound")
 			return data
+		content = str2bytes(content)
 		return data[:offset] + content + data[offset + len(content):]
 
 	def patch_file(self, infile, patch_config, outfile = None, base = 0):
@@ -2635,7 +2802,7 @@ class PyGDB():
 			#print(addr)
 			value = patch_config[addr]
 			data = ""
-			if type(value) == str:
+			if type(value) in [str, bytes]:
 				data = value
 				
 			else:
@@ -3544,7 +3711,10 @@ int main() {
 		exit_sign = True
 		while True:
 			try:
-				data = raw_input()
+				if python_version == 2:
+					data = raw_input()
+				else:
+					data = input()
 				if data.strip().lower() in ["exit", "quit", "e", "q"]:
 					exit_sign = True
 					break
@@ -3636,7 +3806,7 @@ int main() {
 		else:
 			try:
 				return int(data, 16)
-			except Exception, e:
+			except Exception as e:
 				return int(data)
 
 	def heapinfo(self,*arg):
@@ -3698,7 +3868,7 @@ int main() {
 		mf_angelheap.setHeapFilter(heapFilter)
 
 	def find_ret(self, addr):
-		if type(addr) == str:
+		if type(addr) in [str, bytes]:
 			addr = self.get_symbol_value(addr)
 		old_addr = addr
 		last_addr = old_addr
@@ -3823,6 +3993,11 @@ int main() {
 		self.inject_restore(addr)
 
 		origin_data = self.read_mem(addr, len(data))
+		if python_version == 2:
+			pass
+		else:
+			if type(data) == str:
+				data = data.encode()
 		self.write_mem(addr, data)
 		self.inject_patch_map[addr] = [data, origin_data]
 
@@ -4057,7 +4232,7 @@ int main() {
 		if addr in self.inject_hook_map.keys():
 			self.remove_inject_hook(addr)
 
-		if type(func) == str:
+		if type(func) in [str, bytes]:
 			if func in self.inject_hook_globals.keys():
 				func_addr = self.inject_hook_globals[func]
 			else:
@@ -4070,7 +4245,7 @@ int main() {
 		plt_key = "dispatcher_plt_%x"%(self.inject_hook_base)
 		if plt_key not in self.core_pygdb_maps.keys():
 			sym_count = 1
-			addr_size = self.bits / 8
+			addr_size = int(self.bits / 8)
 			plt_base = self.inject_hook_alloc(sym_count*8, align = True)
 			got_base = self.inject_hook_alloc(sym_count*addr_size, align = True)
 			self.write_plt_got(self.core_pygdb_maps["pygdb_dispatch_addr"], plt_base, got_base)
@@ -4394,12 +4569,14 @@ int main() {
 
 
 	def clear_inject_hook(self):
-		for key in self.inject_hook_map.keys():
+		key_list = [c for c in self.inject_hook_map.keys()]
+		for key in key_list:
 			self.remove_inject_hook(key)
 
 	def clear_inject_patch(self):
 		self.clear_inject_hook()
-		for key in self.inject_patch_map.keys():
+		key_list = [c for c in self.inject_patch_map.keys()]
+		for key in key_list:
 			self.inject_hook_free(key)
 			self.remvoe_inject_patch(key)
 
@@ -4414,9 +4591,11 @@ int main() {
 			size = data_size
 			data = ''
 
+		size = int(size)
+
 		#print("align0:", align)
 		if align == True:
-			align = (self.bits / 8) * 2
+			align = int((self.bits / 8) * 2)
 		#print("align1:", align)
 
 		align_addr = 0
@@ -4558,6 +4737,7 @@ int main() {
 		for addr in self.inject_patch_map.keys():
 			#print(addr)
 			[data, _] = self.inject_patch_map[addr]
+			#print("data:", type(data), data)
 			file_data = self.patch_data(file_data, addr - base, data)
 
 		if outfile is None:
@@ -4665,10 +4845,14 @@ int main() {
 
 	def get_fd_info(self, fd):
 		info = self.get_file_info(fd)
-		if info.startswith("socket:") or info == "":
+		if python_version == 2:
+			sockname = "socket:"
+		else:
+			sockname = b"socket:"
+		if info.startswith(sockname) or len(info) == 0:
 			pc = self.get_reg("pc")
 			#print("pc before call get_sock_info:", hex(pc))
 			new_info = self.get_sock_info(fd)
-			if new_info != "":
+			if len(new_info) != 0:
 				info = new_info
 		return info
