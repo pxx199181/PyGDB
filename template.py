@@ -39,7 +39,7 @@ def main():
     pygdb.attach_name(binary_path, 0)
     pygdb.setHeapFilter("fastbin|tcache|unsortbin")
     data = pygdb.execute("print &main_arena")
-    print("data:", repr(data)
+    print("data:", repr(data))
 
     calloc_offset = 0x81a50
     calloc_ret_offset = 0x81C3D
@@ -53,7 +53,7 @@ def main():
     __libc_calloc_addr_ret = calloc_ret_offset + pygdb.libc()
     malloc_addr_ret = pygdb.find_ret(malloc_addr)
     print("__libc_calloc_ret:", hex(__libc_calloc_addr_ret))
-    print(("malloc_addr_ret:", hex(malloc_addr_ret))
+    print("malloc_addr_ret:", hex(malloc_addr_ret))
     free_addr_ret = pygdb.find_ret("__libc_free")
     print("free_addr_ret:", hex(free_addr_ret))
 

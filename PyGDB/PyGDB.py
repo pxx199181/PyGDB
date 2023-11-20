@@ -33,14 +33,14 @@ python_version = sys.version_info.major
 
 PYGDB_decode_hex = None
 PYGDB_encode_hex = None
-do_command = None
+run_command = None
 
 if python_version == 2:
 	import commands
-	def do_command_imp(cmd_line):
+	def run_command_imp(cmd_line):
 		(status, output) = commands.getstatusoutput(cmd_line)
 		return output
-	do_command = do_command_imp
+	run_command = run_command_imp
 	reload(sys)
 	sys.setdefaultencoding('utf-8')
 
@@ -54,13 +54,13 @@ if python_version == 2:
 
 elif python_version == 3:
 	import subprocess
-	def do_command_imp(cmd_line):
+	def run_command_imp(cmd_line):
 		try:
 			output = subprocess.check_output(cmd_line, shell = True)
 			return output.decode()
 		except Exception as e:
 			return ''
-	do_command = do_command_imp
+	run_command = run_command_imp
 
 	def decode_hex_imp(data):
 		return bytes.fromhex(data)
@@ -246,7 +246,7 @@ def PyGDB_make_tiny_elf(shellcode, outfile = None, base = None, mode = 32):
 		elf_bin = "bad"
 	if outfile is not None:
 		PyGDB_writefile(outfile, elf_bin)
-		do_command("chmod +x " + outfile)
+		run_command("chmod +x " + outfile)
 	return elf_bin
 
 class CallException(Exception):
@@ -379,7 +379,10 @@ class PyGDB():
 			self.push_asm = "push"
 
 		if self.is_arm():
-			self.common_reg = "r0"
+			if self.bits == 32:
+				self.common_reg = "r0"
+			else:
+				self.common_reg = "x0"
 		elif self.bits == 64:
 			self.common_reg = "rax"
 		else:
@@ -404,7 +407,7 @@ class PyGDB():
 		self.gdb_argv.append("-ex")
 		self.gdb_argv.append("source %s"%(self.peda_file))
 
-		#self.banner = do_command(" ".join(self.gdb_argv) + " --batch")
+		#self.banner = run_command(" ".join(self.gdb_argv) + " --batch")
 		#print(self.banner)
 		self.run_gdb()
 
@@ -427,11 +430,11 @@ class PyGDB():
 		capsize = 0
 		word = 0
 		arch = 0
-		data = do_command("file %s"%self.bin_path)
+		data = run_command("file %s"%self.bin_path)
 		tmp =  re.search(", (.*), ",data)
 		if tmp :
 			info = tmp.group()
-			info = info[2:].split(" version")[0].lower()
+			info = info[2:].split(" version")[0].lower().split(",")[0]
 			print("arch:", info)
 			if "x86-64" in info:
 				capsize = 8
@@ -1059,8 +1062,16 @@ class PyGDB():
 				self.NopOp()
 				self.show_context()
 
+	def setProcMap(self, info):
+		self.procmapinfo = info
+
+	def unsetProcMap(self):
+		self.procmapinfo = None
 
 	def procmap(self):
+		if self.procmapinfo is not None:
+			return self.procmapinfo
+
 		if self.dbg_pid is None:
 			self.dbg_pid = self.get_dbg_pid()
 			if self.dbg_pid is None:
@@ -1075,14 +1086,24 @@ class PyGDB():
 		with open("/proc/{}/maps".format(self.dbg_pid), "r") as maps:
 			return maps.read()
 
+	def getModuleBase(self, moduleName):
+		pat = ".*" + moduleName
+		data = re.findall(pat, self.procmap())
+		if data:
+			libaddr = data[0].split("-")[0]
+			return int(libaddr, 16)
+		else:
+			return 0
+
+
 	def getlibcbase(self):
 		data = re.search(".*libc.*\.so", self.procmap())
-		if data :
+		if data:
 			libcaddr = data.group().split("-")[0]
 			self.libc_base = int(libcaddr, 16)
 			self.do_gdb("set $libc={}".format(hex(int(libcaddr, 16))))
 			return int(libcaddr, 16)
-		else :
+		else:
 			self.libc_base = None
 			return 0
 
@@ -1105,24 +1126,24 @@ class PyGDB():
 		procname = self.getprocname()
 		pat = ".*" + procname
 		data = re.findall(pat, self.procmap())
-		if data :
+		if data:
 			codebaseaddr = data[0].split("-")[0]
 			self.code_base = int(codebaseaddr, 16)
 			codeend = data[0].split("-")[1].split()[0]
 			self.do_gdb("set $code={}".format(hex(int(codebaseaddr, 16))))
 			return (int(codebaseaddr, 16), int(codeend, 16))
-		else :
+		else:
 			self.code_base = None
 			return (0, 0)
 
 	def getheapbase(self):
 		data = re.search(".*heap\]", self.procmap())
-		if data :
+		if data:
 			heapbase = data.group().split("-")[0]
 			self.heap_base = int(heapbase, 16)
 			self.do_gdb("set $heap={}".format(hex(int(heapbase, 16))))
 			return int(heapbase, 16)
-		else :
+		else:
 			self.heap_base = None
 			return 0
 
@@ -1161,7 +1182,7 @@ class PyGDB():
 			exe_name = binary_name[b_pos + 1:]
 		else:
 			exe_name = binary_name
-		data = do_command("pidof %s"%exe_name).strip()
+		data = run_command("pidof %s"%exe_name).strip()
 		if len(data) == 0:
 			print("process %s not exist, please run it"%binary_name)
 			exit(0)
@@ -1292,6 +1313,49 @@ class PyGDB():
 
 	def write_long_list(self, addr, data_list):
 		return self._write_mid_list(addr, data_list, 8)
+
+	def get_args(self, idx, count):
+		args = []
+		for i in range(idx, idx + count):
+			args.append(self.get_arg(idx + i))
+		return args
+
+	def get_arg(self, idx):
+		if self.is_arm():
+			if self.bits == 32:
+				if idx < 4:
+					return self.get_reg("r%d"%idx)
+				else:
+					sp = self.get_reg("sp")
+					idx -= 4
+			else:
+				if idx < 8:
+					return self.get_reg("x%d"%idx)
+				else:
+					sp = self.get_reg("sp")
+					idx -= 8
+		else:
+			if self.bits == 64:
+				reg_names = ["rdi", "rsi", "rdx", "rcx", "r8", "r9"]
+
+				if idx < len(reg_names):
+					#print("args[i]", type(args[i]), reg_names[i], args[i])
+					return self.get_reg(reg_names[idx])
+
+				else:
+					sp = self.get_reg("sp")
+					idx -= 6 
+					idx += 1 #ret addr
+
+			else:
+				sp = self.get_reg("sp")
+				idx += 1 #ret addr
+
+		if self.bits == 32:
+			return self.read_int(sp + 4*idx)
+		else:
+			return self.read_long(sp + 8*idx)
+
 
 	def real_addr(self, addr, is_pie = False):
 		if type(addr) is not str:
@@ -1791,7 +1855,10 @@ class PyGDB():
 	def get_result(self):
 		ret_v = 0
 		if self.is_arm():
-			ret_v = self.get_reg("r0")
+			if self.bits == 32:
+				ret_v = self.get_reg("r0")
+			else:
+				ret_v = self.get_reg("x0")
 		else:
 			if self.bits == 64:
 				ret_v = self.get_reg("rax")
@@ -2336,7 +2403,10 @@ class PyGDB():
 
 		nop_step_info = ""
 		if self.is_arm():
-			nop_step_info = "mov r0, r0"
+			if self.bits == 32:
+				nop_step_info = "mov r0, r0"
+			else:
+				nop_step_info = "mov x0, x0"
 		else:
 			nop_step_info = "nop"
 
@@ -2474,7 +2544,7 @@ class PyGDB():
 			self.write_mem(addr, data)
 
 	def run_cmd(self, cmd_line):
-		data = do_command(cmd_line)
+		data = run_command(cmd_line)
 		return data
 
 	def gen_rand_str(self, size = 16):
@@ -4123,8 +4193,8 @@ int main() {
 
 		func_addr = self.core_pygdb_maps["core_hook_dispatcher"]
 		if self.is_arm():
-			call_dispatcher_asm_list.append("%s r1, 0x%x"%(self.mov_asm, func_addr))
-			call_dispatcher_asm_list.append("blx r1")
+			call_dispatcher_asm_list.append("%s %s, 0x%x"%(self.mov_asm, self.arch_args[1], func_addr))
+			call_dispatcher_asm_list.append("blx %s"%(self.arch_args[1]))
 		else:
 			call_dispatcher_asm_list.append("%s %s, 0x%x"%(self.mov_asm, self.common_reg, func_addr))
 			call_dispatcher_asm_list.append("call %s"%self.common_reg)
